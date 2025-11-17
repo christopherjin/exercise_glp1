@@ -1,0 +1,516 @@
+---
+title: "glp1a_epigenetics"
+output: html_document
+date: "2024-07-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MotrpacRatTraining6mo)
+library(tidyr)
+library(dplyr)
+library(conflicted)
+library(ggplot2)
+library(tibble)
+library(ComplexHeatmap)
+library(here)
+library(ggbreak)
+library(patchwork)
+library(circlize)
+library(Biobase)
+library(gridExtra)
+library(ggpubr)
+
+output_loc = here()
+source(file.path(output_loc, "glp1a_helpers.R"))
+```
+
+# this report is for evaluating epigenetic relationships at a single feature level
+
+So our goal is to try to transition things into the single feature level per individual rat sample, instead of commenting on things on a group level. 
+
+This may help us more clearly see which features are actually meaningfully regulated by the epigenetics that we're describing here. 
+
+```{r setting up data, message = F}
+interested_genes = c('GCGR', 'GLP1R', 'GLP2R', 'GIPR', 'SCTR', 'VIPR1', 'VIPR2', 'NPY2R', 'CCKAR', 'CCKBR')
+
+
+tissue_types_1b = MotrpacRatTraining6moData::TISSUE_ABBREV
+tissue_types_1b = tissue_types_1b[tissue_types_1b != "PLASMA"]
+# all_da_results_subset_filter = find_interested_features()
+all_da_results_subset_filter = readRDS(file.path(here(), "data", "glp1a_all_omes_subset_wz.RDS"))
+
+# mapping = all_da_results_subset_filter %>% select(feature_ID, gene_symbol) %>% distinct(feature_ID, .keep_all = T)
+# qc_norm_list = list()
+# for(tissue in tissue_types_1b){
+#   combined_qc_norm = combine_normalized_data(tissues = tissue, assays = c("ATAC", "METHYL", "TRNSCRPT"), include_epigen = T, exclude_outliers = T)
+#   if(!"ATAC" %in% combined_qc_norm$assay | !"METHYL" %in% combined_qc_norm$assay) next
+#   combined_qc_norm_annotated = left_join(combined_qc_norm, mapping, by = "feature_ID") %>%
+#     filter(!is.na(gene_symbol)) %>%
+#     select(-feature, -tissue)
+#   qc_norm_list[[tissue]] = combined_qc_norm_annotated
+#   gc()
+# }
+# saveRDS(qc_norm_list, file = paste0(repo_dir, "data/glp1a_all_omes_qc_norm_subset.RDS"))
+qc_norm_list = readRDS(file.path(here(), "data", "glp1a_all_omes_qc_norm_subset.RDS"))
+```
+
+
+So here we squish the values by `gene_symbol`, which means we basically just
+average all the epigenetic corresponding features/sites to the mean within that 
+corresponding gene_symbol. The mapping for a site is determined by the 
+Motrpac consortium when the data is loaded.
+```{r}
+mean_median_epigen = all_da_results_subset_filter %>%
+  group_by(gene_symbol, assay, tissue, sex, comparison_group) %>%
+  mutate(
+    mean_logFC = mean(logFC, na.rm = TRUE),
+    median_logFC = median(logFC, na.rm = TRUE)
+  ) %>%
+  select(-feature_ID, -p_value, -adj_p_value, -logFC, -zscore) %>%
+  distinct(assay, tissue, sex, comparison_group, gene_symbol, .keep_all = T) %>%
+  arrange(gene_symbol,tissue, sex, comparison_group, assay) %>%
+  pivot_wider(
+    names_from = c(assay),
+    values_from = c(mean_logFC, median_logFC)
+  ) %>%
+  filter(!is.na(mean_logFC_TRNSCRPT) & !is.na(mean_logFC_ATAC) & !is.na(mean_logFC_METHYL))
+```
+
+Note: these plots include all of our "interested features" - so any confidence
+intervals are going to built off all of these features 
+```{r overall trsncript vs atac}
+rna_atac = ggplot(mean_median_epigen, aes(x = mean_logFC_ATAC, y = mean_logFC_TRNSCRPT, color = tissue, shape = sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = "Mean LogFC ATAC", y = "Mean LogFC Trnspt", title = "TRNSCRPT vs ATAC")
+rna_atac
+```
+Note: these plots include all of our "interested features" - so any confidence
+intervals are going to built off all of these features 
+```{r overall trsncript vs methyl}
+rna_methyl = ggplot(mean_median_epigen, aes(x = mean_logFC_METHYL, y = mean_logFC_TRNSCRPT, color = tissue, shape = sex)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = "Mean LogFC Methyl", y = "Mean LogFC Trns", title = "TRNSCRPT vs METHYL") 
+rna_methyl
+```
+
+So instead of the above, we just make individual data points for sites, instead
+of averaging across sites for a given gene mapping. 
+
+Note: these plots include all of our "interested features"
+```{r epigen not averaging}
+# here we let multiple individual features corresponding to the same gene plot
+# above we just averaged if multiple features belonged to the same gene
+all_da_results_subset_sig_filter = all_da_results_subset_filter %>%
+  filter(assay == "ATAC" | assay == "TRNSCRPT") %>%
+  dplyr::filter(p_value < 0.05) 
+atac_data = all_da_results_subset_sig_filter %>%
+  filter(assay == "ATAC") %>%
+  select(gene_symbol, logFC, sex, comparison_group, tissue, p_value) %>%
+  rename(logFC_ATAC = logFC)
+trnscrpt_data = all_da_results_subset_filter %>%
+  filter(assay == "TRNSCRPT") %>%
+  select(gene_symbol, logFC, sex, comparison_group, tissue, p_value) %>%
+  rename(logFC_TRNSCRPT = logFC)
+#i am confident there's a better way to organize this but the above works...
+plot_data_atac = atac_data %>%
+  inner_join(trnscrpt_data, by = c("gene_symbol", "sex", "comparison_group", "tissue")) 
+
+scatter_plot_atac = ggplot(plot_data_atac, aes(x = logFC_ATAC, y = logFC_TRNSCRPT, shape = sex, color = comparison_group)) +
+  geom_point() +
+  labs(x = "LogFC in ATAC", y = "LogFC in TRNSCRPT", title = "LogFC in ATAC vs TRNSCRPT all SITES") 
+
+print(scatter_plot_atac)
+```
+Note: these plots include all of our "interested features"
+```{r all sites}
+plot_data_atac_tissue = plot_data_atac %>%
+  group_by(tissue) %>%
+  mutate(correlation = cor(logFC_ATAC, logFC_TRNSCRPT, method = "pearson")) %>%
+  ungroup()
+
+# Create the scatter plot with facets by tissue and correlation label
+scatter_plot_atac = ggplot(plot_data_atac_tissue, aes(x = logFC_ATAC, y = logFC_TRNSCRPT, shape = sex, color = comparison_group)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") + 
+  labs(x = "LogFC in ATAC", y = "LogFC in TRNSCRPT", title = "LogFC in ATAC vs TRNSCRPT, all site by tissue") +
+  facet_wrap(~tissue) + 
+  geom_text(aes(label = paste0("Corr overall: ", round(correlation, 2))), x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)
+
+print(scatter_plot_atac)
+```
+Note: these plots include all of our "interested features"
+```{r all site by tissue and sex}
+plot_data_atac = plot_data_atac %>%
+  group_by(tissue, sex) %>%
+  mutate(correlation = cor(logFC_ATAC, logFC_TRNSCRPT, method = "pearson")) %>%
+  ungroup()
+
+scatter_plot_atac = ggplot(plot_data_atac, aes(x = logFC_ATAC, y = logFC_TRNSCRPT, shape = sex, color = comparison_group)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") + # optional: add trend line
+  labs(x = "LogFC in ATAC", y = "LogFC in TRNSCRPT", title = "LogFC in ATAC vs TRNSCRPT, all site by tissue and sex") +
+  facet_grid(tissue ~ sex) + 
+  geom_text(aes(label = paste0("Corr, per sex: ", round(correlation, 2))), x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)
+
+print(scatter_plot_atac)
+#note that these n start to get small if we're doing correlations per sex. its a little bit better because we're doing it site-level but still have to keep the sample size in mind. 
+```
+
+# we repeat the above plots by with methyl vs transcript now
+```{r}
+all_da_results_subset_sig_filter = all_da_results_subset_filter %>%
+  dplyr::filter(p_value < 0.05) 
+# unique(all_da_results_subset_sig_filter$tissue)
+
+methyl_data = all_da_results_subset_sig_filter %>%
+  filter(assay == "METHYL") %>%
+  select(gene_symbol, logFC, sex, comparison_group, tissue, p_value) %>%
+  rename(logFC_methyl = logFC)
+
+trnscrpt_data = all_da_results_subset_filter %>%
+  filter(assay == "TRNSCRPT") %>%
+  select(gene_symbol, logFC, sex, comparison_group, tissue, p_value) %>%
+  rename(logFC_TRNSCRPT = logFC)
+
+# Duplicate TRNSCRPT logFC values to match each corresponding ATAC value for the same gene_symbol
+plot_data_methyl = methyl_data %>%
+  inner_join(trnscrpt_data, by = c("gene_symbol", "sex", "comparison_group", "tissue")) 
+
+scatter_plot_methyl = ggplot(plot_data_methyl, aes(x = logFC_methyl, y = logFC_TRNSCRPT, shape = sex, color = comparison_group)) +
+  geom_point() +
+  labs(x = "LogFC in Methyl", y = "LogFC in TRNSCRPT", title = "LogFC in Methyl vs TRNSCRPT, site level") 
+
+print(scatter_plot_methyl)
+```
+
+
+```{r}
+plot_data_methyl = plot_data_methyl %>%
+  group_by(tissue) %>%
+  mutate(correlation = cor(logFC_methyl, logFC_TRNSCRPT, method = "pearson")) %>%
+  ungroup()
+
+scatter_plot_methyl = ggplot(plot_data_methyl, aes(x = logFC_methyl, y = logFC_TRNSCRPT, shape = sex, color = comparison_group)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") + # optional: add trend line
+  labs(x = "LogFC in Methyl", y = "LogFC in TRNSCRPT", title = "LogFC in Methyl vs TRNSCRPT site-level, by tissue") +
+  facet_wrap(~tissue) +
+  geom_text(aes(label = paste0("Correlation: ", round(correlation, 2))), x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)
+
+print(scatter_plot_methyl)
+```
+
+Now lets plot individual samples using average of all corresponding sites
+
+These are at a sample level!
+```{r}
+cor_results = data.frame(
+  Tissue = character(),
+  Gene = character(),
+  DataType = character(),
+  Correlation_R = numeric(),
+  cor_p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(tissue in names(qc_norm_list)){
+  qc_norm_matrix = qc_norm_list[[tissue]]
+  for(gene in unique(qc_norm_matrix$gene_symbol)){
+    subset_pheno = PHENO %>% select(pid, sacrificetime,sex)
+    specific_feat = qc_norm_matrix %>% filter(gene_symbol == gene)
+    rna = specific_feat %>% filter(assay == "TRNSCRPT")
+    if(nrow(rna) == 0) next
+    
+    atac = specific_feat %>% filter(assay == "ATAC")
+    col_means = atac %>% summarise(across(where(is.numeric), mean)) %>%
+      mutate(assay = "ATAC_MEAN")
+    atac = bind_rows(atac, col_means, rna) %>% filter(assay == "ATAC_MEAN" | assay == "TRNSCRPT")
+    atac_plot = t(atac %>% select(-feature_ID, -assay, -gene_symbol)) %>% as.data.frame()
+    colnames(atac_plot) = c("ATAC_MEAN", "TRNSCRPT")
+    atac_plot$pid = as.numeric(rownames(atac_plot))
+    atac_plot = left_join(atac_plot, subset_pheno, by = "pid") %>% distinct(pid, .keep_all = T)
+    atac_plot = atac_plot[complete.cases(atac_plot),]
+    # Calculate ATAC correlation
+    atac_cor = cor.test(atac_plot$ATAC_MEAN, atac_plot$TRNSCRPT, method = "pearson")
+    cor_results = cor_results %>%
+      add_row(Tissue = tissue, Gene = gene, DataType = "ATAC", 
+              Correlation_R = atac_cor$estimate, cor_p_value = atac_cor$p.value)
+    
+    # Repeat for methyl
+    methyl = specific_feat %>% filter(assay == "METHYL")
+    col_means = methyl %>% summarise(across(where(is.numeric), mean)) %>%
+      mutate(assay = "METHYL_MEAN")
+    methyl = bind_rows(methyl, col_means, rna) %>% filter(assay == "METHYL_MEAN" | assay == "TRNSCRPT")
+    methyl_plot = t(methyl %>% select(-feature_ID, -assay, -gene_symbol)) %>% as.data.frame() 
+    colnames(methyl_plot) = c("METHYL_MEAN", "TRNSCRPT")
+    methyl_plot$pid = as.numeric(rownames(methyl_plot))
+    methyl_plot = left_join(methyl_plot, subset_pheno, by = "pid") %>% distinct(pid, .keep_all = T)
+    methyl_plot = methyl_plot[complete.cases(methyl_plot),]
+    # Calculate Methyl correlation
+    methyl_cor = cor.test(methyl_plot$METHYL_MEAN, methyl_plot$TRNSCRPT, method = "pearson")
+    # Store Methyl correlation results
+    cor_results = cor_results %>%
+      add_row(Tissue = tissue, Gene = gene, DataType = "METHYL", 
+              Correlation_R = methyl_cor$estimate, cor_p_value = methyl_cor$p.value)
+    
+    if(abs(atac_cor$estimate) < 0.24 & abs(methyl_cor$estimate) < 0.24) next 
+    #if the correlations are that low, just dont bother plotting
+    
+    atac = ggplot(atac_plot, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
+      geom_point(aes(color = sacrificetime, shape = sex)) +
+      geom_smooth(method = "lm", color = "darkblue", se = TRUE) + # Single confidence interval
+      labs(title = paste(tissue, "ATAC:", gene),
+           x = "ATAC_MEAN",
+           y = "TRNSCRPT") +
+      theme_minimal() +
+      annotate("text", x = Inf, y = Inf, label = paste("R =", round(atac_cor$estimate, 2), 
+                                                       "p =", signif(atac_cor$p.value, 2)), 
+               hjust = 1.1, vjust = 1.1, size = 5, color = "black")
+    ggsave(filename = file.path(here(), 
+                                "figures",
+                                "epigen_transcript",
+                                paste0(tissue, "_", gene, "_atac.pdf")),
+           width = 5, height = 5, units = "in")
+    
+    # Create Methyl plot with a single confidence interval and points colored by sacrificetime and shaped by sex
+    methyl = ggplot(methyl_plot, aes(x = METHYL_MEAN, y = TRNSCRPT)) +
+      geom_point(aes(color = sacrificetime, shape = sex)) +
+      geom_smooth(method = "lm", color = "darkred", se = TRUE) + # Single confidence interval
+      labs(title = paste(tissue,"Methyl:", gene),
+           x = "METHYL_MEAN",
+           y = "TRNSCRPT") +
+      theme_minimal() +
+      annotate("text", x = Inf, y = Inf, label = paste("R =", round(methyl_cor$estimate, 2), 
+                                                       "p =", signif(methyl_cor$p.value, 2)), 
+               hjust = 1.1, vjust = 1.1, size = 5, color = "black")
+    ggsave(filename = file.path(here(), 
+                                "figures",
+                                "epigen_transcript",
+                                paste0(tissue, "_", gene, "_methyl.pdf")),
+           width = 5, height = 5, units = "in")
+    
+    # atac
+    gridExtra::grid.arrange(atac, methyl, ncol = 2)
+  }
+}
+```
+
+```{r}
+cor_results = cor_results %>% arrange(abs(Correlation_R))
+tail(cor_results)
+```
+Now lets plot individual samples using average of all corresponding - now just at 8wks
+
+Note: these are still averaged across all corresponding sites
+```{r}
+cor_8wks = data.frame(
+  Tissue = character(),
+  Gene = character(),
+  DataType = character(),
+  Correlation_R = numeric(),
+  cor_p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(tissue in names(qc_norm_list)){
+  qc_norm_matrix = qc_norm_list[[tissue]]
+  for(gene in unique(qc_norm_matrix$gene_symbol)){
+    subset_pheno = PHENO %>% select(pid, sacrificetime,sex)
+    
+    specific_feat = qc_norm_matrix %>% filter(gene_symbol == gene)
+    rna = specific_feat %>% filter(assay == "TRNSCRPT"); if(nrow(rna) == 0) next
+    
+    atac = specific_feat %>% filter(assay == "ATAC")
+    col_means = atac %>% summarise(across(where(is.numeric), mean)) %>%
+      mutate(assay = "ATAC_MEAN")
+    atac = bind_rows(atac, col_means, rna) %>% filter(assay == "ATAC_MEAN" | assay == "TRNSCRPT")
+    atac_plot = t(atac %>% select(-feature_ID, -assay, -gene_symbol)) %>% as.data.frame()
+    colnames(atac_plot) = c("ATAC_MEAN", "TRNSCRPT")
+    atac_plot$pid = as.numeric(rownames(atac_plot))
+    atac_plot = left_join(atac_plot, subset_pheno, by = "pid") %>% distinct(pid, .keep_all = T) %>%
+      filter(sacrificetime == "8w")
+    atac_plot = atac_plot[complete.cases(atac_plot),]
+    # Calculate ATAC correlation
+    atac_cor = cor.test(atac_plot$ATAC_MEAN, atac_plot$TRNSCRPT, method = "pearson")
+    cor_8wks = cor_8wks %>%
+      add_row(Tissue = tissue, Gene = gene, DataType = "ATAC", 
+              Correlation_R = atac_cor$estimate, cor_p_value = atac_cor$p.value)
+    
+    # Repeat for methyl
+    methyl = specific_feat %>% filter(assay == "METHYL")
+    col_means = methyl %>% summarise(across(where(is.numeric), mean)) %>%
+      mutate(assay = "METHYL_MEAN")
+    methyl = bind_rows(methyl, col_means, rna) %>% filter(assay == "METHYL_MEAN" | assay == "TRNSCRPT")
+    methyl_plot = t(methyl %>% select(-feature_ID, -assay, -gene_symbol)) %>% as.data.frame() 
+    colnames(methyl_plot) = c("METHYL_MEAN", "TRNSCRPT")
+    methyl_plot$pid = as.numeric(rownames(methyl_plot))
+    methyl_plot = left_join(methyl_plot, subset_pheno, by = "pid") %>% distinct(pid, .keep_all = T) %>%
+      filter(sacrificetime == "8w")
+    methyl_plot = methyl_plot[complete.cases(methyl_plot),]
+    # Calculate Methyl correlation
+    methyl_cor = cor.test(methyl_plot$METHYL_MEAN, methyl_plot$TRNSCRPT, method = "pearson")
+    
+    # Store Methyl correlation results
+    cor_8wks = cor_8wks %>%
+      add_row(Tissue = tissue, Gene = gene, DataType = "METHYL", 
+              Correlation_R = methyl_cor$estimate, cor_p_value = methyl_cor$p.value)
+    if(abs(atac_cor$estimate) < 0.3 & abs(methyl_cor$estimate) < 0.3) next #if the correlations are that low, just dont bother plotting
+    
+    # Create ATAC plot with confidence interval and correlation
+    atac = ggplot(atac_plot, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
+      geom_point(aes(shape = sex)) +
+      geom_smooth(method = "lm", color = "darkblue", se = TRUE) + # Add confidence interval
+      labs(title = paste(tissue, "ATAC (8wk only):", gene),
+           x = "ATAC_MEAN",
+           y = "TRNSCRPT") +
+      theme_minimal() +
+      stat_cor(method = "pearson", label.y.npc = "top")
+    ggsave(filename = file.path(here(), 
+                                "figures",
+                                "epigen_transcript",
+                                paste0(tissue, "_", gene, "_atac_wk8.pdf")),
+           width = 5, height = 5, units = "in")
+    
+    methyl = ggplot(methyl_plot, aes(x = METHYL_MEAN, y = TRNSCRPT)) +
+      geom_point(aes(shape = sex)) +
+      geom_smooth(method = "lm", color = "darkred", se = TRUE) + # Add confidence interval
+      labs(title = paste(tissue, "Methyl (8wk only):", gene),
+           x = "METHYL_MEAN",
+           y = "TRNSCRPT") +
+      theme_minimal() +
+      stat_cor(method = "pearson", label.y.npc = "top") 
+    ggsave(filename = file.path(here(), 
+                                "figures",
+                                "epigen_transcript",
+                                paste0(tissue, "_", gene, "_methyl_wk8.pdf")),
+           width = 5, height = 5, units = "in")
+    
+    # Print the plots together
+    gridExtra::grid.arrange(atac, methyl, ncol = 2)
+  }
+}
+```
+
+
+
+```{r}
+all_da_results_8wks = all_da_results_subset_filter %>% filter(comparison_group == "8w")
+
+cor_8wks_plot = cor_8wks %>% arrange(abs(Correlation_R)) %>%
+  rename(tissue = Tissue) %>%
+  rename(gene_symbol = Gene) %>% 
+  rename(assay = DataType)
+cor_8wks_plot = left_join(cor_8wks_plot, all_da_results_8wks, by = c("tissue", "gene_symbol", "assay"))
+tail(cor_8wks_plot)
+```
+
+So one of the most interesting findings is CCKBR in HIPPOC -> lets go ahead
+and plot the relationship at each of the timepoints
+```{r}
+for(single_interested_gene in c("Cckbr", "Npy2r")) {
+  single_interested_tissue = "HIPPOC"
+  qc_norm_matrix = qc_norm_list[[single_interested_tissue]]
+  
+  subset_pheno = MotrpacRatTraining6moData::PHENO %>% select(pid, sacrificetime, sex)
+  specific_feat = qc_norm_matrix %>% filter(gene_symbol == single_interested_gene)
+  rna = specific_feat %>% filter(assay == "TRNSCRPT")
+  atac = specific_feat %>% filter(assay == "ATAC")
+  col_means = atac %>%
+    summarise(across(where(is.numeric), mean)) %>%
+    mutate(assay = "ATAC_MEAN")
+  
+  atac = bind_rows(atac, col_means, rna) %>%
+    filter(assay %in% c("ATAC_MEAN", "TRNSCRPT"))
+  
+  atac_plot = t(atac %>% select(-feature_ID, -assay, -gene_symbol)) %>%
+    as.data.frame()
+  colnames(atac_plot) = c("ATAC_MEAN", "TRNSCRPT")
+  atac_plot$pid = as.numeric(rownames(atac_plot))
+  atac_plot = left_join(atac_plot, subset_pheno, by = "pid") %>%
+    distinct(pid, .keep_all = TRUE)
+  atac_plot = atac_plot[complete.cases(atac_plot),]
+  
+  plot_list = list()
+
+  #-------------------------------------------
+  # Combined plot (all timepoints)
+  #-------------------------------------------
+  combined_cor = cor.test(atac_plot$ATAC_MEAN, atac_plot$TRNSCRPT, method = "pearson")
+  
+  combined_plot = ggplot(atac_plot, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
+    geom_point(aes(color = sex, shape = sex), size = 2) +
+    geom_smooth(method = "lm", color = "darkblue", se = TRUE) +
+    labs(
+      title = paste0("All Timepoints (R =", round(combined_cor$estimate, 2),
+                    ", p =", signif(combined_cor$p.value, 2), ")"),
+      x = "ATAC_MEAN",
+      y = "TRNSCRPT",
+      color = "Sex",
+      shape = "Sex"
+    ) +
+    theme_minimal(base_size = 10) +
+    stat_cor(method = "pearson", label.y.npc = "top") +
+    guides(shape = "none") +
+    theme(legend.position = "bottom") +
+    scale_color_manual(values = c("male" = "#1F77B4",
+                                  "female" = "#E377C2"))
+  
+  plot_list[["All"]] = combined_plot
+  
+  #-------------------------------------------
+  # Individual timepoint plots
+  #-------------------------------------------
+  for(tp in c("8w")) { #"1w", "2w", "4w",
+    atac_plot_tp = atac_plot %>% filter(sacrificetime == tp)
+    atac_cor = cor.test(atac_plot_tp$ATAC_MEAN, atac_plot_tp$TRNSCRPT, method = "pearson")
+    
+    atac_tp = ggplot(atac_plot_tp, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
+      geom_point(aes(color = sex, shape = sex), size = 2) +
+      geom_smooth(method = "lm", color = "darkblue", se = TRUE) +
+      labs(
+        title = paste0(tp, " Only (R =", round(atac_cor$estimate, 2),
+                      ", p =", signif(atac_cor$p.value, 2), ")"),
+        x = "ATAC_MEAN",
+        y = "TRNSCRPT",
+        color = "Sex",
+        shape = "Sex"
+      ) +
+      theme_minimal(base_size = 10) +
+      stat_cor(method = "pearson", label.y.npc = "top") +
+      guides(shape = "none") +
+      theme(legend.position = "bottom") +
+      scale_color_manual(values = c("male" = "#1F77B4",
+                                    "female" = "#E377C2"))
+    
+    plot_list[[tp]] = atac_tp
+  }
+
+  #-------------------------------------------
+  # Save combined figure (5 columns) -> new plan just include 5 as a sup. 
+  # to toggle b/t all tp and just 2 see above for tp in c(...), switch
+  # ncol = 5, width = 17
+  #-------------------------------------------
+  fig_name = paste0("fig_2d_", single_interested_gene, "_", single_interested_tissue, ".pdf")
+  pdf(file = file.path(here(), "figures", fig_name),
+      width = 6,  # wider for 5 columns
+      height = 4)
+  
+  gridExtra::grid.arrange(
+    grobs = plot_list,
+    ncol = 2,
+    top = paste0(single_interested_tissue, " — ", single_interested_gene),
+    respect = TRUE
+  )
+  
+  dev.off()
+}
+
+```
+
+
+
+
+
