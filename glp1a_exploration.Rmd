@@ -5,29 +5,6 @@ date: '2023-10-24'
 output: html_document
 ---
 
-# General Targets and Initial Look
-
-Incretin Target List
-
-GCG peptide products: GCG, GLP1(ZGLP), GLP2(not available in our data set); note there are other products that form and have differing affinities for the below receptors
-Receptors: GCGR, GLP1R, GLP2R
-Enzymes that facilitate cleavage (PCSK2, PCSK1)
-
-GIP
-Receptor: GIPR
-
-Other incretins of the GCG super family and their receptors:
-SCT/SCTR
-VIP/VIPR1/VIPR2
-ADCYAP1/ADCYAP1R1
-
-Incretin-like or regulatory factors
-PYY, NPY; receptor (NPY2R)
-CCK/CCKAR/CCKBR
-Dpp4 (inhibitor)
-SST (somatostatin degrades incretins)
-
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(MotrpacRatTraining6mo)
@@ -50,7 +27,16 @@ output_loc = here()
 source(file.path(output_loc, "glp1a_helpers.R"))
 ```
 
+
 ```{r just establishing info, message = F, include = F}
+# ------------------------------------------------------------------------------
+# Data source disclaimer:
+# All data used in this analysis are derived from the publicly available
+# MotrpacRatTraining6moData R package (version 2.0.0), which provides curated
+# multi-omic results from the MoTrPAC 6-month rat endurance and resistance
+# training study.
+# ------------------------------------------------------------------------------
+
 interested_genes = c('GCGR', 'GLP1R', 'GLP2R', 'GIPR', 'SCTR', 'VIPR1', 'VIPR2', 'NPY2R', 'CCKAR', 'CCKBR')
 
 select_tissue_types = MotrpacRatTraining6moData::TISSUE_ABBREV
@@ -69,21 +55,27 @@ all_feat_in = all_feat_to_gene %>% #all omes corresponding to those previous fea
 #see subseting process. splitting off here bc the loading of epigen is slow. 
 # all_da_results_subset_filter = find_interested_features(select_tissue_types)
 # saveRDS(all_da_results_subset_filter, file = file.path(here(), "data", "glp1a_all_omes_subset_wz.RDS"))
-all_da_results_subset_filter = readRDS(file.path(here(), "data", "glp1a_all_omes_subset_wz.RDS")) 
+# all_da_results_subset_filter = readRDS(file.path(here(), "data", "glp1a_all_omes_subset_wz.RDS")) 
+
+all_da_results_subset_filter = readRDS(file.path(here(), "data", "glp1a_all_omes_subset_wz.RDS")) %>%
+  mutate(adj_p_value = p.adjust(p_value, method = "BH"), .by = c("tissue", "assay", "comparison_group"))
 ```
 
+Loading in data from the luminex assays and combining. The luminex assays had a much restricted number of features compared to the RNAseq, so I only pull GIP, GLP1, Glucagon.
 ```{r, eval = TRUE}
-all_immuno_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = select_tissue_types,
+select_tissue_types_immuno = c(select_tissue_types, "PLASMA")
+all_immuno_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = select_tissue_types_immuno,
                                                                   assays = "IMMUNO",
                                                                   include_epigen = F) %>%
+  filter(feature_ID %in% c("GIP", "GLP1", "GLUCAGON")) %>%
   mutate(gene_symbol = "") %>%
-  select(feature_ID, gene_symbol, assay, tissue, sex, comparison_group, p_value, logFC) %>%
-  filter(p_value < 0.05,
-         feature_ID %in% c("GIP", "GLP1", "GLUCAGON"))
+  mutate(adj_p_value = p.adjust(p_value, method = "BH"), .by = c("tissue", "assay", "comparison_group")) %>%
+  select(feature_ID, gene_symbol, assay, tissue, sex, comparison_group, p_value, adj_p_value, logFC) %>%
+  filter(adj_p_value < 0.1)
 
 significant_gene_results = all_da_results_subset_filter %>%
-  filter(p_value < 0.05) %>%
-  select(feature_ID, gene_symbol, assay, tissue, sex, comparison_group, p_value, logFC) %>%
+  filter(adj_p_value < 0.1) %>%
+  select(feature_ID, gene_symbol, assay, tissue, sex, comparison_group, p_value, adj_p_value, logFC) %>%
   arrange(assay)
 
 full_significant_results = rbind(all_immuno_da_results, significant_gene_results)
@@ -100,7 +92,7 @@ all_da_results_subset = MotrpacRatTraining6mo::combine_da_results(tissues = sele
   filter(gene_symbol %in% interested_genes)
 ```
 
-some of these plots end up in figure 2D
+None of these plots are actually used in the manuscript. A few trajectory plots of normalized transcript expression. Helpful for general data visualizations, if desired
 ```{r visualizing norm data, eval = F, warning = F, message = F}
 for(feat in unique(all_da_results_subset_filter$feature_ID)){
   for (tissue in tissue_types_1b){
@@ -115,6 +107,7 @@ for(feat in unique(all_da_results_subset_filter$feature_ID)){
 }
 ```
 
+Generating figure 1. The RNA_y_breaks ggplot syntax was giving me trouble because of the fixed/free scales, so I went with a zoom instead. 
 ```{r figure 1}
 rna_tissues = select_tissue_types
 immuno_tissues = MotrpacRatTraining6moData::TISSUE_ABBREV[!MotrpacRatTraining6moData::TISSUE_ABBREV %in% c("OVARY", "TESTES")]
@@ -129,9 +122,6 @@ immuno_glp1 = get_expression_stats("GLP1", immuno_tissues, "IMMUNO") %>%
     TRUE ~ Tissue
   ))
 
-#pausing troubleshooting:: this doesn't work right now and I'm not sure why.
-#it seems to make the breaks if i just return the rna plot, but if they get combined
-#it doesn't work. maybe patchwork got updated or something?
 glp1_fig1 = plot_rna_immuno_combined(
   rna_data = rna_glp1r,
   immuno_data = immuno_glp1,
@@ -140,7 +130,7 @@ glp1_fig1 = plot_rna_immuno_combined(
   rna_y_breaks = list(c(2.5, 7), c(12, 75)),
   immuno_reverse = FALSE
 )
-pdf(file = file.path(here(), "figures", "fig_1_glp1.pdf"))
+pdf(file = file.path(here(), "figures", "fig_1_glp1test.pdf"))
 print(glp1_fig1)
 dev.off()
 
@@ -160,13 +150,62 @@ gip_fig1 = plot_rna_immuno_combined(
   immuno_reverse = FALSE
 )
 
-pdf(file = file.path(here(), "figures", "fig_1_gip.pdf"))
+pdf(file = file.path(here(), "figures", "fig_1_giptest.pdf"))
 print(gip_fig1)
 dev.off()
 ```
 
 
-```{r figure 2a, eval = T, warning = F}
+```{r figure 1 split by sex}
+rna_tissues = select_tissue_types
+immuno_tissues = MotrpacRatTraining6moData::TISSUE_ABBREV[!MotrpacRatTraining6moData::TISSUE_ABBREV %in% c("OVARY", "TESTES")]
+
+# Glp1r & GLP1
+rna_glp1r = get_expression_stats_by_sex("ENSRNOG00000001152", rna_tissues, "TRNSCRPT")
+
+#we're just tossing plasma into blood to match up levels with RNA
+immuno_glp1 = get_expression_stats_by_sex("GLP1", immuno_tissues, "IMMUNO") %>%
+  mutate(Tissue = case_when(
+    Tissue == "PLASMA" ~ "BLOOD",
+    TRUE ~ Tissue
+  ))
+
+glp1_fig1 = plot_rna_immuno_jitterbysex(
+  rna_data = rna_glp1r,
+  immuno_data = immuno_glp1,
+  include_first_legend = TRUE,
+  gene_name = "GLP1R",
+  rna_y_breaks = c(c(8,70)),
+  immuno_reverse = FALSE
+)
+
+pdf(file = file.path(here(), "figures", "fig_1_glp1_by_sex.pdf"))
+print(glp1_fig1)
+dev.off()
+
+# Gipr & GIP
+rna_gipr = get_expression_stats_by_sex("ENSRNOG00000015860", rna_tissues, "TRNSCRPT")
+#we're just tossing plasma into blood to match up levels with RNA
+immuno_gip = get_expression_stats_by_sex("GIP", immuno_tissues, "IMMUNO") %>%
+  mutate(Tissue = case_when(
+    Tissue == "PLASMA" ~ "BLOOD",
+    TRUE ~ Tissue
+  ))
+
+gip_fig1 = plot_rna_immuno_jitterbysex(
+  rna_data = rna_gipr,
+  immuno_data = immuno_gip,
+  gene_name = "GIPR",
+  immuno_reverse = FALSE
+)
+
+pdf(file = file.path(here(), "figures", "fig_1_gip_by_sex.pdf"))
+print(gip_fig1)
+dev.off()
+```
+
+
+```{r figure 2B, eval = T, warning = F}
 scale = 2
 #so in general, making one big plot with every tissue becomes v difficult to read. 
 #----strategy one: possibly just group vertically for like tissues
@@ -182,57 +221,51 @@ scale = 2
 #----------------------
 
 #----strategy two: make one trimmed one - I think i like this one better?
-trimmed_selection = c("ADRNL", "BAT", 
-                      "BLOOD", "COLON", 
-                      "CORTEX", "HEART")
-heatmap_trimmed = make_a_plot_for_tissue_heatmaps(trimmed_selection)
-pdf(file = file.path(here(), "figures", "fig_2a_attempts", "trimmed_combined_rna_zscore_one.pdf"),
-    width = 18 * scale, height = 6 * scale, family = "ArialMT")
-draw(heatmap_trimmed, merge_legends = F,
-     align_heatmap_legend = "heatmap_top",
-     align_annotation_legend = "heatmap_top")
-dev.off()
-#------------------------
+top_selection = c("CORTEX", 
+                  "HYPOTH",
+                  "HIPPOC",
+                  "BAT",
+                  "WAT-SC",
+                  "SKM-GN",
+                  "SKM-VL"
+)
+bottom_selection = c("BLOOD", 
+                     "HEART",
+                     "LUNG",
+                     "SPLEEN",
+                     "ADRNL", 
+                     "COLON", 
+                     "SMLINT")
 
-#----strategy two part b: 
-#so we actually end up talking about quite a few tissues in the text so im making a 2 layer one
-#and we just move the screenshots together?
-#i can bind them together using patchwork or something too..?
-other_trimmed_selection = c("HIPPOC", "HYPOTH", "LUNG",
-                            "SMLINT", "SPLEEN", "WAT-SC")
-other_heatmap_trimmed = make_a_plot_for_tissue_heatmaps(other_trimmed_selection)
-pdf(file = file.path(here(), "figures", "fig_2a_attempts", "trimmed_combined_rna_zscore_two.pdf"),
-    width = 18 * scale, height = 6 * scale, family = "ArialMT")
-draw(other_heatmap_trimmed, merge_legends = F,
-     align_heatmap_legend = "heatmap_top",
-     align_annotation_legend = "heatmap_top")
-dev.off()
-#------------------------
+heatmap_trimmed = make_a_plot_for_tissue_heatmaps(top_selection,
+                                                  interested_genes)
+other_heatmap_trimmed = make_a_plot_for_tissue_heatmaps(bottom_selection,
+                                                        interested_genes)
+heatmap_full = heatmap_trimmed %v% other_heatmap_trimmed #concat vertically
 
-#------------------------just for supplement------------------------
-heatmap_full = make_a_plot_for_tissue_heatmaps(c(trimmed_selection, other_trimmed_selection))
 pdf(file = file.path(here(), "figures", "fig_2a_attempts", "all_tissue_combined_rna_zscore.pdf"),
     width = 18 * scale, height = 6 * scale, family = "ArialMT")
-draw(heatmap_full, merge_legends = F,
+draw(heatmap_full, merge_legends = FALSE,
      align_heatmap_legend = "heatmap_top",
-     align_annotation_legend = "heatmap_top")
+     align_annotation_legend = "heatmap_top",
+     ht_gap = unit(12, "mm"))
 dev.off()
-#------------------------
 ```
 
-```{r figure 2b, eval = T}
-cutoff = 0.05
+```{r figure 2C triangle plots, eval = T}
+cutoff = 0.10
 #----here we can just find a big table of DA results if you'd like to view the tables.----
 rna_selected_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = select_tissue_types, assays = "TRNSCRPT") %>%
   filter(feature_ID %in% all_da_results_subset_filter$feature_ID) %>%
+  mutate(adj_p_value = p.adjust(p_value, method = "BH"), .by = c("tissue", "assay", "comparison_group")) %>%
   filter(comparison_group == "8w") %>%
-  select(assay, tissue, feature_ID, sex, comparison_group, p_value, logFC) %>%
-  pivot_wider(names_from = sex, values_from = c(p_value, logFC), names_glue = "{sex}_{.value}") %>%
+  select(assay, tissue, feature_ID, sex, comparison_group, adj_p_value, logFC) %>%
+  pivot_wider(names_from = sex, values_from = c(adj_p_value, logFC), names_glue = "{sex}_{.value}") %>%
   mutate(shape = ifelse(male_logFC > 0 & female_logFC > 0, "up", "down")) %>%
   mutate(group = case_when(
-    male_p_value < cutoff & (is.na(female_p_value) | female_p_value >= cutoff) ~ "male-specific",
-    female_p_value < cutoff & (is.na(male_p_value) | male_p_value >= cutoff) ~ "female-specific",
-    female_p_value < cutoff & male_p_value < cutoff  ~ "sex-consistent",
+    male_adj_p_value < cutoff & (is.na(female_adj_p_value) | female_adj_p_value >= cutoff) ~ "male-specific",
+    female_adj_p_value < cutoff & (is.na(male_adj_p_value) | male_adj_p_value >= cutoff) ~ "female-specific",
+    female_adj_p_value < cutoff & male_adj_p_value < cutoff  ~ "sex-consistent",
     TRUE ~ "neither-significant"
   ))  %>% 
   pivot_longer(cols = starts_with("male_") | starts_with("female_"), 
@@ -245,61 +278,91 @@ rna_selected_da_results = merge(rna_selected_da_results, FEATURE_TO_GENE) %>%
 
 #Because of the shapes the order cant really be forced to be in the same order as the other heatmaps?. 
 #Going to stop troubleshooting because it is taking way too long.
-
 rna_selected_da_results$gene_symbol = factor(rna_selected_da_results$gene_symbol,
                                              levels = sort(unique(rna_selected_da_results$gene_symbol)))
 
 
-triangle_plots = ggplot(rna_selected_da_results, 
-                        aes(y=gene_symbol, x=tissue, size=group, shape=shape)) +
-  geom_point(aes(fill=group, colour=group)) +
+triangle_plots = ggplot(
+  rna_selected_da_results,
+  aes(y = gene_symbol, x = tissue, size = group, shape = shape)
+) +
+  geom_point(aes(fill = group, colour = group)) +
   theme_bw() +
-  theme(panel.grid.major.x = element_blank(),
-        panel.grid.major.y = element_line(),
-        plot.background = element_blank(),
-        panel.background = element_blank(),
-        panel.border = element_rect(linewidth=1),
-        axis.text.y = element_text(colour="black"),
-        axis.text.x = element_text(colour="black",
-                                   angle=90, hjust=1, vjust=0.5),
-        axis.title = element_blank(),
-        strip.text.y.left = element_text(size = 10),
-        strip.text.x = element_text(angle=90, hjust=0),
-        axis.text.y.right = element_text(hjust=0),
-        legend.position = "top",
-        legend.box = "vertical",
-        legend.justification = "right",
-        legend.title = element_blank(),
-        legend.margin = margin(t = 0, b = -0.3, unit='cm'),
-        legend.spacing.x = unit(0.1, 'cm')) +
-  scale_fill_manual(values=c("sex-consistent" = "white",
-                             "neither-significant" = "brown",
-                             "male-specific" = MotrpacBicQC::sex_cols[['male']],
-                             "female-specific" = MotrpacBicQC::sex_cols[['female']]),
-                    name = "Node type", guide="none") +
-  scale_colour_manual(values=c("sex-consistent" = "black",
-                               # "neither-significant" = "brown",
-                               "male-specific" = MotrpacBicQC::sex_cols[['male']],
-                               "female-specific" = MotrpacBicQC::sex_cols[['female']]),
-                      name = "Node type", guide="none") +
-  scale_shape_manual(values=c('up'=24, 'down'=25), 
-                     labels=c(up="Up-regulated", down="Down-regulated"), 
-                     name="Node direction") +
-  scale_size_manual(values=c("sex-consistent" = 4,
-                             # "neither-significant" = 1,
-                             "male-specific" = 1.5,
-                             "female-specific" = 3),
-                    breaks = c("sex-consistent","female-specific","male-specific"),
-                    name="Node type") +
-  guides(shape=guide_legend(override.aes = list(size=3, fill="black")),
-         size=guide_legend(override.aes = list(shape=24, 
-                                               size=c(3,2.5,1.5), 
-                                               fill=c("white",MotrpacBicQC::sex_cols[['female']],MotrpacBicQC::sex_cols[['male']]),
-                                               colour=c("black","white","white")))) + 
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(),
+    plot.background = element_blank(),
+    panel.background = element_blank(),
+    panel.border = element_rect(linewidth = 1),
+    axis.text.y = element_text(colour = "black"),
+    axis.text.x = element_text(
+      colour = "black",
+      angle = 90, hjust = 1, vjust = 0.5
+    ),
+    axis.title = element_blank(),
+    strip.text.y.left = element_text(size = 10),
+    strip.text.x = element_text(angle = 90, hjust = 0),
+    axis.text.y.right = element_text(hjust = 0),
+    legend.position = "top",
+    legend.box = "vertical",
+    legend.justification = "right",
+    legend.title = element_blank(),
+    legend.margin = margin(t = 0, b = -0.3, unit = "cm"),
+    legend.spacing.x = unit(0.1, "cm")
+  ) +
+  scale_fill_manual(
+    values = c(
+      "sex-consistent" = "white",
+      "male-specific" = MotrpacBicQC::sex_cols[["male"]],
+      "female-specific" = MotrpacBicQC::sex_cols[["female"]]
+    ),
+    breaks = c("sex-consistent", "female-specific", "male-specific"),
+    name = "Node type"
+  ) +
+  scale_colour_manual(
+    values = c(
+      "sex-consistent" = "black",
+      "male-specific" = MotrpacBicQC::sex_cols[["male"]],
+      "female-specific" = MotrpacBicQC::sex_cols[["female"]]
+    ),
+    breaks = c("sex-consistent", "female-specific", "male-specific"),
+    name = "Node type"
+  ) +
+  scale_shape_manual(
+    values = c(up = 24, down = 25),
+    labels = c(up = "Up-regulated", down = "Down-regulated"),
+    name = "Node direction"
+  ) +
+  scale_size_manual(
+    values = c(
+      "sex-consistent" = 4,
+      "female-specific" = 3,
+      "male-specific" = 2.5
+    ),
+    breaks = c("sex-consistent", "female-specific", "male-specific"),
+    name = "Node type"
+  ) +
+  guides(
+    shape = guide_legend(
+      override.aes = list(size = 3, fill = "black")
+    ),
+    size = guide_legend(
+      override.aes = list(
+        shape = 24,
+        size = c(3, 2.5, 1.5),
+        fill = c(
+          "white",
+          MotrpacBicQC::sex_cols[["female"]],
+          MotrpacBicQC::sex_cols[["male"]]
+        ),
+        colour = c("black", "white", "white")
+      )
+    )
+  ) +
   ggtitle("Responses after 8 weeks of training")
 
 
-pdf(file = paste0(here(), "/figures/fig_2b_rna_triangle_direction.pdf"),
+pdf(file = paste0(here(), "/figures/fig_2c_rna_triangle_direction.pdf"),
     width = 6, height = 4)
 print(triangle_plots)
 dev.off()
@@ -307,14 +370,14 @@ dev.off()
 
 
 Making the immuno heatmaps but instead we're just doing timepoint by tissue
-```{r figure 2c, message = F}
+```{r figure 2D Immuno heatmaps, message = F}
 immuno_tissue_types = c(select_tissue_types, "PLASMA")
 gip_heatmap = make_immuno_heatmap("GIP")$plot
 glp_heatmap = make_immuno_heatmap("GLP1")$plot
 
 combined_heatmap = gip_heatmap + glp_heatmap
 
-pdf(file = paste0(here(), "/figures/fig_2c_gip_glp_immunoassay.pdf"),
+pdf(file = paste0(here(), "/figures/fig_2D_gip_glp_immunoassay.pdf"),
     width = 6, height = 4)
 draw(combined_heatmap, merge_legends = TRUE)
 dev.off()

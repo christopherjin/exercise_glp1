@@ -410,7 +410,7 @@ tail(cor_8wks_plot)
 So one of the most interesting findings is CCKBR in HIPPOC -> lets go ahead
 and plot the relationship at each of the timepoints
 ```{r}
-for(single_interested_gene in c("Cckbr", "Npy2r")) {
+for(single_interested_gene in c("Cckbr", "Cckar")) {
   single_interested_tissue = "HIPPOC"
   qc_norm_matrix = qc_norm_list[[single_interested_tissue]]
   
@@ -434,7 +434,7 @@ for(single_interested_gene in c("Cckbr", "Npy2r")) {
   atac_plot = atac_plot[complete.cases(atac_plot),]
   
   plot_list = list()
-
+  
   #-------------------------------------------
   # Combined plot (all timepoints)
   #-------------------------------------------
@@ -444,8 +444,9 @@ for(single_interested_gene in c("Cckbr", "Npy2r")) {
     geom_point(aes(color = sex, shape = sex), size = 2) +
     geom_smooth(method = "lm", color = "darkblue", se = TRUE) +
     labs(
-      title = paste0("All Timepoints (R =", round(combined_cor$estimate, 2),
-                    ", p =", signif(combined_cor$p.value, 2), ")"),
+      title = paste0("All Timepoints, N = ", nrow(atac_plot)),
+      # title = paste0("All Timepoints (R =", round(combined_cor$estimate, 2),
+      #                ", p =", signif(combined_cor$p.value, 2), ")"),
       x = "ATAC_MEAN",
       y = "TRNSCRPT",
       color = "Sex",
@@ -471,8 +472,9 @@ for(single_interested_gene in c("Cckbr", "Npy2r")) {
       geom_point(aes(color = sex, shape = sex), size = 2) +
       geom_smooth(method = "lm", color = "darkblue", se = TRUE) +
       labs(
-        title = paste0(tp, " Only (R =", round(atac_cor$estimate, 2),
-                      ", p =", signif(atac_cor$p.value, 2), ")"),
+        title = paste0(tp, " Only, N = ", nrow(atac_plot_tp)),
+        # title = paste0(tp, " Only (R =", round(atac_cor$estimate, 2),
+        #               ", p =", signif(atac_cor$p.value, 2), ")"),
         x = "ATAC_MEAN",
         y = "TRNSCRPT",
         color = "Sex",
@@ -487,7 +489,7 @@ for(single_interested_gene in c("Cckbr", "Npy2r")) {
     
     plot_list[[tp]] = atac_tp
   }
-
+  
   #-------------------------------------------
   # Save combined figure (5 columns) -> new plan just include 5 as a sup. 
   # to toggle b/t all tp and just 2 see above for tp in c(...), switch
