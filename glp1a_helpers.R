@@ -182,7 +182,7 @@ plot_rna_immuno_combined = function(rna_data,
   if (!is.null(rna_y_breaks)) {
     for (brk in rna_y_breaks) {
       rna_plot = rna_plot +
-        ggbreak::scale_y_break(brk, scales = "fixed", space = 0.1)
+        ggbreak::scale_y_zoom(brk, zoom = 0.5)
     }
   }
 
@@ -237,29 +237,47 @@ plot_rna_immuno_combined = function(rna_data,
 
 
 plot_rna_immuno_jitterbysex = function(rna_data,
-                                       immuno_data,
+                                       immuno_data = NULL,
                                        gene_name,
                                        include_first_legend = TRUE,
                                        rna_y_breaks = NULL,
                                        immuno_y_breaks = NULL,
                                        immuno_reverse = TRUE) {
-  merged_data = full_join(rna_data, immuno_data, by = c("Tissue", "Sex"))
+  has_immuno = !is.null(immuno_data)
+
+  if (has_immuno) {
+    merged_data = full_join(rna_data, immuno_data, by = c("Tissue", "Sex"))
+    merged_data$missing_immuno = is.na(merged_data$Average.y)
+    merged_data[merged_data$Tissue %in% c("HYPOTH", "VENACV"),]$missing_immuno = "Not run"
+  } else {
+    merged_data = rna_data %>% rename(Average.x = Average, SD.x = SD)
+    merged_data$Average.y = NA_real_
+    merged_data$SD.y = NA_real_
+  }
+
   merged_data$Tissue = factor(merged_data$Tissue, levels = names(MotrpacBicQC::tissue_cols))
-  #tissues run in transcript but not immuno
-  merged_data$missing_immuno = is.na(merged_data$Average.y)
-  #so here - the luminex assays were run in 17 tissues, not run in 2.
-  #in some of the tissues, the feature was not detected -> is na
-  merged_data[merged_data$Tissue %in% c("HYPOTH", "VENACV"),]$missing_immuno = "Not run"
   merged_data$missing_transcript = merged_data$Average.x < 0.2
 
-  if(gene_name == "GLP1R") y_adjust = 10
-  if(gene_name == "GIPR") y_adjust = 4
+  y_adjust = 0
+  if (gene_name == "GLP1R") y_adjust = 10
+  if (gene_name == "GIPR") y_adjust = 4
+
+  # female = solid fill, male = crosshatch overlay to distinguish sex within tissue color
+  sex_patterns = c("female" = "none", "male" = "crosshatch")
 
   rna_plot = ggplot(merged_data, aes(x = Tissue, y = Average.x, fill = Tissue, group = Sex)) +
-    geom_bar(
+    ggpattern::geom_bar_pattern(
+      aes(pattern = Sex),
       stat = "identity",
       width = 0.7,
-      position = position_dodge(width = 0.8)
+      position = position_dodge(width = 0.8),
+      pattern_fill = "black",
+      pattern_colour = "black",
+      pattern_density = 0.15,
+      pattern_spacing = 0.025,
+      pattern_angle = 45,
+      colour = "grey30",
+      linewidth = 0.2
     ) +
     geom_errorbar(
       aes(ymin = Average.x - SD.x, ymax = Average.x + SD.x),
@@ -276,13 +294,18 @@ plot_rna_immuno_jitterbysex = function(rna_data,
       vjust = -0.3
     ) +
     scale_fill_manual(values = MotrpacBicQC::tissue_cols) +
+    ggpattern::scale_pattern_manual(
+      values = sex_patterns,
+      labels = c("female" = "Female (solid)", "male" = "Male (crosshatch)"),
+      name = "Sex"
+    ) +
     ggtitle(paste("RNA-seq Expression -", gene_name)) +
     ylab("Counts per million (CPM)") +
     theme_bw() +
     theme(
-      axis.text.x = element_blank(),
+      axis.text.x = if (has_immuno) element_blank() else element_text(size = 9, angle = 45, hjust = 1, color = "black"),
       axis.title.x = element_blank(),
-      axis.ticks.x = element_blank(),
+      axis.ticks.x = if (has_immuno) element_blank() else element_line(),
       plot.title = element_text(size = 10, hjust = 0.5),
       axis.text.y = element_text(size = 8),
       legend.position = if (include_first_legend) "right" else "none"
@@ -293,12 +316,26 @@ plot_rna_immuno_jitterbysex = function(rna_data,
     rna_plot = rna_plot + ggforce::facet_zoom(y = Average.x < rna_y_breaks[1], zoom.size = 2)
   # ggforce::facet_zoom(y = Average.x < rna_y_breaks[1], zoom.size = 1)
 
+  if (!has_immuno) return(rna_plot)
+
   #----make sure its putting the metabolite level not the gene name-------
   signalling_molecule_name = sub("R$", "", gene_name)
   #---this just pops off the R at the end to remove the receptor----------
 
   immuno_plot = ggplot(merged_data, aes(x = Tissue, y = Average.y, fill = Tissue, group = Sex)) +
-    geom_bar(stat = "identity", width = 0.7, position = position_dodge(0.8)) +
+    ggpattern::geom_bar_pattern(
+      aes(pattern = Sex),
+      stat = "identity",
+      width = 0.7,
+      position = position_dodge(0.8),
+      pattern_fill = "black",
+      pattern_colour = "black",
+      pattern_density = 0.15,
+      pattern_spacing = 0.025,
+      pattern_angle = 45,
+      colour = "grey30",
+      linewidth = 0.2
+    ) +
     geom_errorbar(
       aes(ymin = Average.y - SD.y, ymax = Average.y + SD.y),
       width = 0.25, position = position_dodge(0.8)
@@ -316,11 +353,16 @@ plot_rna_immuno_jitterbysex = function(rna_data,
       inherit.aes = FALSE, size = 2.5, vjust = -0.3
     ) +
     scale_fill_manual(values = MotrpacBicQC::tissue_cols) +
-    ylab("Immunoassay\n(Values relative to plate standards)") +
+    ggpattern::scale_pattern_manual(
+      values = sex_patterns,
+      labels = c("female" = "Female (solid)", "male" = "Male (crosshatch)"),
+      name = "Sex"
+    ) +
+    ylab("Immunoassay\n(Luminex Normalized Protein Expression)") +
     ggtitle(paste("Immunoassay Expression -", signalling_molecule_name)) +
     theme_bw() +
     theme(
-      axis.text.x = element_text(size = 6, angle = 45, hjust = 1),
+      axis.text.x = element_text(size = 9, angle = 45, hjust = 1, color = "black"),
       plot.title = element_text(size = 10, hjust = 0.5),
       axis.text.y = element_text(size = 8),
       legend.position = "none"
@@ -487,7 +529,7 @@ make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
 
 }
 
-make_immuno_heatmap = function(desired_feature){
+make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend = TRUE){
   all_immuno_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = immuno_tissue_types,
                                                                     assays = "IMMUNO",
                                                                     include_epigen = F) %>%
@@ -502,7 +544,9 @@ make_immuno_heatmap = function(desired_feature){
     as.matrix()
 
   column_labels <- colnames(all_immuno_da_results)
-  x_range <- range(all_immuno_da_results, na.rm = TRUE) #range of logFC
+  # use provided color_range so multiple heatmaps share the same scale;
+  # fall back to per-feature range when called standalone
+  x_range <- if (!is.null(color_range)) color_range else range(all_immuno_da_results, na.rm = TRUE)
   color_breaks <- c(x_range[1], 0, x_range[2])
   # Extend range of values out to the nearest 0.1
   legend_breaks <- 0.1 * c(floor(color_breaks[1] / 0.1), 0,
@@ -533,8 +577,9 @@ make_immuno_heatmap = function(desired_feature){
     cluster_rows = FALSE,
     column_title = desired_feature,
     column_labels = column_labels,
+    show_heatmap_legend = show_legend,
     heatmap_legend_param = list(
-      title = paste("logFC", desired_feature),
+      title = "logFC",
       at = legend_breaks,
       labels = legend_breaks
     ),

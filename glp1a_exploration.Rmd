@@ -92,70 +92,6 @@ all_da_results_subset = MotrpacRatTraining6mo::combine_da_results(tissues = sele
   filter(gene_symbol %in% interested_genes)
 ```
 
-None of these plots are actually used in the manuscript. A few trajectory plots of normalized transcript expression. Helpful for general data visualizations, if desired
-```{r visualizing norm data, eval = F, warning = F, message = F}
-for(feat in unique(all_da_results_subset_filter$feature_ID)){
-  for (tissue in tissue_types_1b){
-    if(tissue == "OVARY" | tissue == "TESTES") next
-    #use default 1B function
-    desired_plot = MotrpacRatTraining6mo::plot_feature_normalized_data(assay = 'TRNSCRPT',
-                                                                       tissue = tissue,
-                                                                       feature_ID = feat,
-                                                                       add_gene_symbol = T)
-    print(desired_plot)
-  }
-}
-```
-
-Generating figure 1. The RNA_y_breaks ggplot syntax was giving me trouble because of the fixed/free scales, so I went with a zoom instead. 
-```{r figure 1}
-rna_tissues = select_tissue_types
-immuno_tissues = MotrpacRatTraining6moData::TISSUE_ABBREV[!MotrpacRatTraining6moData::TISSUE_ABBREV %in% c("OVARY", "TESTES")]
-
-# Glp1r & GLP1
-rna_glp1r = get_expression_stats("ENSRNOG00000001152", rna_tissues, "TRNSCRPT")
-
-#we're just tossing plasma into blood to match up levels with RNA
-immuno_glp1 = get_expression_stats("GLP1", immuno_tissues, "IMMUNO") %>%
-  mutate(Tissue = case_when(
-    Tissue == "PLASMA" ~ "BLOOD",
-    TRUE ~ Tissue
-  ))
-
-glp1_fig1 = plot_rna_immuno_combined(
-  rna_data = rna_glp1r,
-  immuno_data = immuno_glp1,
-  include_first_legend = FALSE,
-  gene_name = "GLP1R",
-  rna_y_breaks = list(c(2.5, 7), c(12, 75)),
-  immuno_reverse = FALSE
-)
-pdf(file = file.path(here(), "figures", "fig_1_glp1test.pdf"))
-print(glp1_fig1)
-dev.off()
-
-# Gipr & GIP
-rna_gipr = get_expression_stats("ENSRNOG00000015860", rna_tissues, "TRNSCRPT")
-#we're just tossing plasma into blood to match up levels with RNA
-immuno_gip = get_expression_stats("GIP", immuno_tissues, "IMMUNO") %>%
-  mutate(Tissue = case_when(
-    Tissue == "PLASMA" ~ "BLOOD",
-    TRUE ~ Tissue
-  ))
-
-gip_fig1 = plot_rna_immuno_combined(
-  rna_data = rna_gipr,
-  immuno_data = immuno_gip,
-  gene_name = "GIPR",
-  immuno_reverse = FALSE
-)
-
-pdf(file = file.path(here(), "figures", "fig_1_giptest.pdf"))
-print(gip_fig1)
-dev.off()
-```
-
-
 ```{r figure 1 split by sex}
 rna_tissues = select_tissue_types
 immuno_tissues = MotrpacRatTraining6moData::TISSUE_ABBREV[!MotrpacRatTraining6moData::TISSUE_ABBREV %in% c("OVARY", "TESTES")]
@@ -173,13 +109,14 @@ immuno_glp1 = get_expression_stats_by_sex("GLP1", immuno_tissues, "IMMUNO") %>%
 glp1_fig1 = plot_rna_immuno_jitterbysex(
   rna_data = rna_glp1r,
   immuno_data = immuno_glp1,
-  include_first_legend = TRUE,
+  include_first_legend = FALSE,
   gene_name = "GLP1R",
   rna_y_breaks = c(c(8,70)),
   immuno_reverse = FALSE
 )
 
-pdf(file = file.path(here(), "figures", "fig_1_glp1_by_sex.pdf"))
+pdf(file = file.path(here(), "figures", "fig_1_glp1_by_sex.pdf"),
+    width = 10, height = 8)
 print(glp1_fig1)
 dev.off()
 
@@ -199,8 +136,73 @@ gip_fig1 = plot_rna_immuno_jitterbysex(
   immuno_reverse = FALSE
 )
 
-pdf(file = file.path(here(), "figures", "fig_1_gip_by_sex.pdf"))
+pdf(file = file.path(here(), "figures", "fig_1_gip_by_sex.pdf"),
+    width = 10, height = 8)
 print(gip_fig1)
+dev.off()
+```
+
+
+```{r figure 1 other genes rna only by sex}
+other_genes = genes_in %>%
+  dplyr::filter(!tolower(gene_name) %in% c("glp1r", "gipr")) %>%
+  dplyr::distinct(gene_id, gene_name)
+
+for (i in seq_len(nrow(other_genes))) {
+  gene_id = other_genes$gene_id[i]
+  gene_name_val = other_genes$gene_name[i]
+  #not particularly efficient bc it loads everything for each call for the other genes... 
+  rna_data = get_expression_stats_by_sex(gene_id, rna_tissues, "TRNSCRPT")
+  if (nrow(rna_data) == 0) next
+
+  gene_plot = plot_rna_immuno_jitterbysex(
+    rna_data = rna_data,
+    gene_name = gene_name_val,
+    include_first_legend = TRUE
+  )
+
+  pdf(file = file.path(here(), "figures", "incretin_by_tissue", paste0("fig_1_", tolower(gene_name_val), "_by_sex.pdf")))
+  print(gene_plot)
+  dev.off()
+}
+```
+
+
+```{r figure 1 expression presence table}
+gene_lookup = genes_in %>% dplyr::distinct(gene_id, gene_name)
+
+expr_table = lapply(seq_len(nrow(gene_lookup)), function(i) {
+  df = get_expression_stats(gene_lookup$gene_id[i], rna_tissues, "TRNSCRPT")
+  if (nrow(df) == 0) return(NULL)
+  df$Gene = gene_lookup$gene_name[i]
+  df
+}) %>%
+  dplyr::bind_rows() %>%
+  dplyr::mutate(detected = Average > 0.2)
+
+expr_table$Tissue = factor(expr_table$Tissue, levels = names(MotrpacBicQC::tissue_cols))
+expr_table$Gene = factor(expr_table$Gene)
+
+presence_table = ggplot(expr_table, aes(x = Tissue, y = Gene, fill = detected)) +
+  geom_tile(color = "grey70", linewidth = 0.4) +
+  scale_fill_manual(
+    values = c("TRUE" = "#d4edda", "FALSE" = "#f8d7da"),
+    labels = c("TRUE" = "> 0.2 CPM", "FALSE" = "<= 0.2 CPM"),
+    name = NULL
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = 9, angle = 45, hjust = 1, color = "black"),
+    axis.text.y = element_text(size = 10, color = "black"),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "top"
+  ) +
+  ggtitle("RNA-seq detection by tissue (SED animals)")
+
+pdf(file = file.path(here(), "figures", "fig_1_expression_presence_table.pdf"),
+    width = 16, height = 4.5)
+print(presence_table)
 dev.off()
 ```
 
@@ -368,19 +370,34 @@ print(triangle_plots)
 dev.off()
 ```
 
-
 Making the immuno heatmaps but instead we're just doing timepoint by tissue
 ```{r figure 2D Immuno heatmaps, message = F}
 immuno_tissue_types = c(select_tissue_types, "PLASMA")
-gip_heatmap = make_immuno_heatmap("GIP")$plot
-glp_heatmap = make_immuno_heatmap("GLP1")$plot
 
-combined_heatmap = gip_heatmap + glp_heatmap
+shared_color_range = c(-3, 3)
+
+# GIP carries the legend; GLP1 suppresses its duplicate
+gip_heatmap = make_immuno_heatmap("GIP", color_range = shared_color_range, show_legend = TRUE)
+glp_heatmap = make_immuno_heatmap("GLP1", color_range = shared_color_range, show_legend = FALSE)
+
+combined_heatmap = gip_heatmap$plot + glp_heatmap$plot
 
 pdf(file = paste0(here(), "/figures/fig_2D_gip_glp_immunoassay.pdf"),
     width = 6, height = 4)
-draw(combined_heatmap, merge_legends = TRUE)
+draw(combined_heatmap, annotation_legend_list = gip_heatmap$legend)
 dev.off()
+
+
+all_immuno_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = immuno_tissue_types,
+                                                                    assays = "IMMUNO",
+                                                                    include_epigen = F) %>%
+    filter(feature_ID %in% c("GLP1")) %>%
+    mutate(adj_p_value = p.adjust(p_value, method = "BH"), .by = c("tissue", "assay", "comparison_group")) %>%
+    select(tissue, sex, comparison_group, logFC) %>%
+    tidyr::pivot_wider(id_cols = tissue,
+                       names_from = c(sex, comparison_group),
+                       values_from = logFC) %>%
+    column_to_rownames("tissue") 
 ```
 
 
