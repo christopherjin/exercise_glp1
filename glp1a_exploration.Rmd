@@ -22,6 +22,7 @@ library(patchwork)
 library(circlize)
 library(Biobase)
 library(gridExtra)
+library(gtexr)
 
 output_loc = here()
 source(file.path(output_loc, "glp1a_helpers.R"))
@@ -37,7 +38,7 @@ source(file.path(output_loc, "glp1a_helpers.R"))
 # training study.
 # ------------------------------------------------------------------------------
 
-interested_genes = c('GCGR', 'GLP1R', 'GLP2R', 'GIPR', 'SCTR', 'VIPR1', 'VIPR2', 'NPY2R', 'CCKAR', 'CCKBR')
+interested_genes = c('GCGR', 'GLP1R', 'GLP2R', 'GIPR', 'SCTR', 'VIPR2', 'NPY2R', 'CCKAR', 'CCKBR')
 
 select_tissue_types = MotrpacRatTraining6moData::TISSUE_ABBREV
 select_tissue_types = select_tissue_types[!select_tissue_types %in% c("PLASMA", "OVARY", "TESTES")]
@@ -142,6 +143,15 @@ print(gip_fig1)
 dev.off()
 ```
 
+Accompanying glucagon expression check for manuscript.
+```{r}
+immuno_gcg = get_expression_stats_by_sex("GLUCAGON", immuno_tissues, "IMMUNO") %>%
+  mutate(Tissue = case_when(
+    Tissue == "PLASMA" ~ "BLOOD",
+    TRUE ~ Tissue
+  ))
+```
+
 
 ```{r figure 1 other genes rna only by sex}
 other_genes = genes_in %>%
@@ -165,45 +175,6 @@ for (i in seq_len(nrow(other_genes))) {
   print(gene_plot)
   dev.off()
 }
-```
-
-
-```{r figure 1 expression presence table}
-gene_lookup = genes_in %>% dplyr::distinct(gene_id, gene_name)
-
-expr_table = lapply(seq_len(nrow(gene_lookup)), function(i) {
-  df = get_expression_stats(gene_lookup$gene_id[i], rna_tissues, "TRNSCRPT")
-  if (nrow(df) == 0) return(NULL)
-  df$Gene = gene_lookup$gene_name[i]
-  df
-}) %>%
-  dplyr::bind_rows() %>%
-  dplyr::mutate(detected = Average > 0.2)
-
-expr_table$Tissue = factor(expr_table$Tissue, levels = names(MotrpacBicQC::tissue_cols))
-expr_table$Gene = factor(expr_table$Gene)
-
-presence_table = ggplot(expr_table, aes(x = Tissue, y = Gene, fill = detected)) +
-  geom_tile(color = "grey70", linewidth = 0.4) +
-  scale_fill_manual(
-    values = c("TRUE" = "#d4edda", "FALSE" = "#f8d7da"),
-    labels = c("TRUE" = "> 0.2 CPM", "FALSE" = "<= 0.2 CPM"),
-    name = NULL
-  ) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(size = 9, angle = 45, hjust = 1, color = "black"),
-    axis.text.y = element_text(size = 10, color = "black"),
-    axis.title = element_blank(),
-    panel.grid = element_blank(),
-    legend.position = "top"
-  ) +
-  ggtitle("RNA-seq detection by tissue (SED animals)")
-
-pdf(file = file.path(here(), "figures", "fig_1_expression_presence_table.pdf"),
-    width = 16, height = 4.5)
-print(presence_table)
-dev.off()
 ```
 
 
@@ -397,7 +368,75 @@ all_immuno_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = immu
     tidyr::pivot_wider(id_cols = tissue,
                        names_from = c(sex, comparison_group),
                        values_from = logFC) %>%
-    column_to_rownames("tissue") 
+    column_to_rownames("tissue")
+```
+
+Figure 1E for revisions
+
+GTEx human reference expression for the incretin receptor genes. BAT and VENACV have no GTEx equivalent and are excluded. SKM-GN and SKM-VL both map to Muscle_Skeletal.
+```{r figure 1 expression presence table}
+rat_for_poly = get_motrpac_expression(interested_genes, rna_tissues)
+
+rat_to_gtex = c(
+  "ADRNL" = "Adrenal_Gland",
+  "BLOOD" = "Whole_Blood",
+  "COLON" = "Colon_Sigmoid",
+  "CORTEX" = "Brain_Cortex",
+  "HEART" = "Heart_Left_Ventricle",
+  "HIPPOC" = "Brain_Hippocampus",
+  "HYPOTH" = "Brain_Hypothalamus",
+  "KIDNEY" = "Kidney_Cortex",
+  "LIVER" = "Liver",
+  "LUNG" = "Lung",
+  "SKM-GN" = "Muscle_Skeletal",
+  "SKM-VL" = "Muscle_Skeletal",
+  "SMLINT" = "Small_Intestine_Terminal_Ileum",
+  "SPLEEN" = "Spleen",
+  "WAT-SC" = "Adipose_Subcutaneous"
+)
+
+gtex_for_poly = get_gtex_expression(interested_genes, rat_to_gtex, select_tissue_types)
+
+poly_data = dplyr::bind_rows(
+  make_triangle_poly(rat_for_poly, select_tissue_types, interested_genes),
+  make_triangle_poly(gtex_for_poly, select_tissue_types, interested_genes)
+)
+
+combined_split_plot = ggplot(poly_data, aes(x = px, y = py, group = group, fill = fill_val)) +
+  geom_polygon() +
+  geom_hline(yintercept = seq(0.5, length(interested_genes) + 0.5, 1),
+             color = "grey70", linewidth = 0.3) +
+  geom_vline(xintercept = seq(0.5, length(select_tissue_types) + 0.5, 1),
+             color = "grey70", linewidth = 0.3) +
+  scale_x_continuous(
+    breaks = seq_along(select_tissue_types),
+    labels = select_tissue_types,
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    breaks = seq_along(interested_genes),
+    labels = interested_genes,
+    expand = c(0, 0)
+  ) +
+  scale_fill_manual(
+    values = c("detected" = "#d4edda", "not_detected" = "#f8d7da", "no_data" = "grey85"),
+    labels = c("detected" = "Detected", "not_detected" = "Not detected", "no_data" = "No GTEx data"),
+    name = NULL
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = 9, angle = 45, hjust = 1, color = "black"),
+    axis.text.y = element_text(size = 10, color = "black"),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "top"
+  ) +
+  ggtitle("Incretin Expression in Rat (upper right) and Human (lower left)")
+
+pdf(file = file.path(here(), "figures", "combined_split_detection_table.pdf"),
+    width = 16, height = 5)
+print(combined_split_plot)
+dev.off()
 ```
 
 

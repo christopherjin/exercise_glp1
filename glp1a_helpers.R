@@ -150,7 +150,7 @@ plot_rna_immuno_combined = function(rna_data,
   #so here - the luminex assays were run in 17 tissues, not run in 2.
   #in some of the tissues, the feature was not detected -> is na
   merged_data[merged_data$Tissue %in% c("HYPOTH", "VENACV"),]$missing_immuno = "Not run"
-  merged_data$missing_transcript = merged_data$Average.x < 0.2
+  merged_data$missing_transcript = merged_data$Average.x < 0.5
 
   if(gene_name == "GLP1R") y_adjust = 10
   if(gene_name == "GIPR") y_adjust = 4
@@ -256,7 +256,7 @@ plot_rna_immuno_jitterbysex = function(rna_data,
   }
 
   merged_data$Tissue = factor(merged_data$Tissue, levels = names(MotrpacBicQC::tissue_cols))
-  merged_data$missing_transcript = merged_data$Average.x < 0.2
+  merged_data$missing_transcript = merged_data$Average.x < 0.5
 
   y_adjust = 0
   if (gene_name == "GLP1R") y_adjust = 10
@@ -286,7 +286,7 @@ plot_rna_immuno_jitterbysex = function(rna_data,
     ) +
     geom_text(
       data = merged_data %>% filter(missing_transcript),
-      aes(x = Tissue, y = y_adjust, label = "< 0.2 CPM.", group = Sex),
+      aes(x = Tissue, y = y_adjust, label = "< 0.5 CPM.", group = Sex),
       # position = position_dodge(width = 0.8), #don't have 2 sets of description for this for both sex
       inherit.aes = FALSE,
       size = 2.5,
@@ -606,4 +606,89 @@ make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend 
   figure_return$legend = annotation_legend
   return(figure_return)
 }
+
+get_motrpac_expression = function(genes, tissues) {
+  trns_feat_to_gene = MotrpacRatTraining6mo::load_feature_annotation(assay = "TRNSCRPT")
+  gene_lookup = trns_feat_to_gene %>%
+    dplyr::filter(tolower(gene_name) %in% tolower(genes)) %>%
+    dplyr::distinct(gene_id, gene_name)
+
+  expr_table = lapply(seq_len(nrow(gene_lookup)), function(i) {
+    df = get_expression_stats(gene_lookup$gene_id[i], tissues, "TRNSCRPT")
+    if (nrow(df) == 0) return(NULL)
+    df$Gene = gene_lookup$gene_name[i]
+    df
+  }) %>%
+    dplyr::bind_rows() %>%
+    dplyr::mutate(detected = Average > 0.5)
+
+  expr_table$Tissue = factor(expr_table$Tissue, levels = names(MotrpacBicQC::tissue_cols))
+  expr_table$Gene = factor(expr_table$Gene)
+
+  tidyr::expand_grid(tissue = tissues, gene = toupper(genes)) %>%
+    dplyr::left_join(
+      expr_table %>%
+        dplyr::mutate(tissue = as.character(Tissue), gene = toupper(as.character(Gene))) %>%
+        dplyr::select(tissue, gene, detected) %>%
+        dplyr::distinct(),
+      by = c("tissue", "gene")
+    ) %>%
+    dplyr::mutate(source = "rat")
+}
+
+get_gtex_expression = function(genes, rat_to_gtex, tissues = names(rat_to_gtex)) {
+  gtex_gene_ids = lapply(genes, function(g) {
+    res = get_gene_search(geneId = g)
+    if (nrow(res) == 0) return(NULL)
+    res %>%
+      dplyr::filter(geneSymbol == g) %>%
+      dplyr::select(geneSymbol, gencodeId)
+  }) %>%
+    dplyr::bind_rows()
+
+  gtex_expr = get_median_gene_expression(
+    gencodeIds = gtex_gene_ids$gencodeId,
+    tissueSiteDetailIds = unique(rat_to_gtex)
+  ) %>%
+    dplyr::select(geneSymbol, tissueSiteDetailId, median_tpm = median)
+
+  rat_tissue_map_df = tibble::tibble(
+    rat_tissue = names(rat_to_gtex),
+    tissueSiteDetailId = unname(rat_to_gtex)
+  )
+
+  gtex_with_rat = gtex_expr %>%
+    dplyr::left_join(rat_tissue_map_df, by = "tissueSiteDetailId",
+                     relationship = "many-to-many") %>%
+    dplyr::mutate(detected = median_tpm > 0.5)
+
+  tidyr::expand_grid(tissue = tissues, gene = genes) %>%
+    dplyr::left_join(
+      gtex_with_rat %>%
+        dplyr::mutate(tissue = as.character(rat_tissue), gene = as.character(geneSymbol)) %>%
+        dplyr::distinct(tissue, gene, detected),
+      by = c("tissue", "gene")
+    ) %>%
+    dplyr::mutate(source = "human")
+}
+
+make_triangle_poly = function(df, tissue_levels, gene_levels) {
+  lapply(seq_len(nrow(df)), function(i) {
+    x_num = which(tissue_levels == df$tissue[i])
+    y_num = which(gene_levels == df$gene[i])
+    fill_val = if (is.na(df$detected[i])) "no_data" else if (df$detected[i]) "detected" else "not_detected"
+    if (df$source[i] == "rat") {
+      px = c(x_num - 0.5, x_num + 0.5, x_num + 0.5)
+      py = c(y_num + 0.5, y_num + 0.5, y_num - 0.5)
+    } else {
+      px = c(x_num - 0.5, x_num - 0.5, x_num + 0.5)
+      py = c(y_num + 0.5, y_num - 0.5, y_num - 0.5)
+    }
+    data.frame(px = px, py = py, fill_val = fill_val,
+               group = paste(df$tissue[i], df$gene[i], df$source[i], sep = "_"))
+  }) %>% dplyr::bind_rows()
+}
+
+
+
 
