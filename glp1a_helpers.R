@@ -259,7 +259,7 @@ plot_rna_immuno_jitterbysex = function(rna_data,
   merged_data$missing_transcript = merged_data$Average.x < 0.5
 
   y_adjust = 0
-  if (gene_name == "GLP1R") y_adjust = 10
+  if (gene_name == "GLP1R") y_adjust = 5
   if (gene_name == "GIPR") y_adjust = 4
 
   # female = solid fill, male = crosshatch overlay to distinguish sex within tissue color
@@ -283,15 +283,6 @@ plot_rna_immuno_jitterbysex = function(rna_data,
       aes(ymin = Average.x - SD.x, ymax = Average.x + SD.x),
       width = 0.25,
       position = position_dodge(width = 0.8)
-    ) +
-    geom_text(
-      data = merged_data %>% filter(missing_transcript),
-      aes(x = Tissue, y = y_adjust, label = "< 0.5 CPM.", group = Sex),
-      # position = position_dodge(width = 0.8), #don't have 2 sets of description for this for both sex
-      inherit.aes = FALSE,
-      size = 2.5,
-      angle = 90,
-      vjust = -0.3
     ) +
     scale_fill_manual(values = MotrpacBicQC::tissue_cols) +
     ggpattern::scale_pattern_manual(
@@ -381,7 +372,11 @@ plot_rna_immuno_jitterbysex = function(rna_data,
 
 
 make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
-                                           interested_genes){
+                                           interested_genes,
+                                           value_col = "zscore",
+                                           cutoff = 0.1,
+                                           show_heatmap_legend = TRUE,
+                                           legend_tissue_types = select_tissue_types) {
   combined_ome_metadata = list(); combined_ome_fdr = list(); current_ome = "TRNSCRPT"
 
   for (tissue_value in select_tissue_types){
@@ -400,9 +395,9 @@ make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
     da_res_tissue = da_res_check %>%
       rename(group = comparison_group)  %>%
       group_by(sex, tissue) %>%  # Group only by sex and tissue
-      tidyr::complete(gene_symbol = all_genes, group = expected_groups, fill = list(zscore = NaN)) %>%
+      tidyr::complete(gene_symbol = all_genes, group = expected_groups, fill = setNames(list(NaN), value_col)) %>%
       ungroup() %>%
-      select(gene_symbol, assay, tissue, group, zscore, adj_p_value, sex) %>%
+      select(gene_symbol, assay, tissue, group, zscore, logFC, adj_p_value, sex) %>%
       mutate(assay = "TRNSCRPT")
 
     make_ome_metadata_matrix = function(value_col, group_levels = c("1w", "2w", "4w", "8w")) {
@@ -428,10 +423,10 @@ make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
         as.matrix()
     }
 
-    ome_metadata_zscore = make_ome_metadata_matrix("zscore")
+    ome_metadata_values = make_ome_metadata_matrix(value_col)
     ome_metadata_fdr = make_ome_metadata_matrix("adj_p_value")
 
-    combined_ome_metadata[[tissue_value]] <- ome_metadata_zscore
+    combined_ome_metadata[[tissue_value]] <- ome_metadata_values
     combined_ome_fdr[[tissue_value]] <- ome_metadata_fdr
   }
   common_genes <- Reduce(intersect, lapply(combined_ome_metadata, rownames))
@@ -464,14 +459,21 @@ make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
                            levels = color_order))  # Keep these for plotting
 
   combined_annotation = ComplexHeatmap::HeatmapAnnotation(
-    df = annotation_df %>% select(Tissue, Sex, Timepoint),
+    Tissue = ComplexHeatmap::anno_block(
+      labels = color_order,
+      labels_gp = gpar(fontsize = 6 * scale, fontface = "bold"),
+      gp = gpar(fill = NA, col = NA),
+      height = unit(8, "pt") * scale
+    ),
+    Sex = annotation_df$Sex,
+    Timepoint = annotation_df$Timepoint,
     border = TRUE,
     gp = gpar(col = "black"),
     gap = 0,
     which = "column",
-    height = unit(6 * 2, "pt")*scale,
+    show_legend = FALSE,
+    simple_anno_size = unit(6, "pt") * scale,
     col = list(
-      Tissue = MotrpacBicQC::tissue_cols,
       Sex = c("female" = "#ff6eff", "male" = "#5555ff"),
       Timepoint = c('1w' = '#F7FCB9',
                     '2w' = '#ADDD8E',
@@ -486,13 +488,23 @@ make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
       title_gp = gpar(fontsize = 7 * scale, fontface = "bold")
     )
   )
+  if (value_col == "zscore") {
+    col_breaks = c(-1.6, 0, 1.8)
+    legend_title = "Z-Score \nper Group/Sex"
+    legend_at = c(-3, -1:1, 3)
+  } else {
+    col_breaks = c(-1, 0, 1)
+    legend_title = "logFC VS\nsex-matched control"
+    legend_at = c(-5, -3, 0, 3, 5)
+  }
+
+  col_fun = circlize::colorRamp2(breaks = col_breaks, colors = c("#3366ff", "white", "darkred"))
+
   # Create heatmap
   ht <- ComplexHeatmap::Heatmap(
+    show_heatmap_legend = FALSE,
     matrix = final_ome_metadata,
-    col = circlize::colorRamp2(
-      breaks = c(-1.6, 0, 1.8),
-      colors = c("#3366ff", "white", "darkred")
-    ),
+    col = col_fun,
     cluster_columns = FALSE,
     cluster_rows = FALSE,
     show_column_names = FALSE,
@@ -502,34 +514,64 @@ make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
     row_names_gp = gpar(fontsize = 5 * scale),
     height = nrow(final_ome_metadata) * unit(5.5, "pt") * scale,
     width = ncol(final_ome_metadata) * unit(5.5, "pt") * scale,
-    column_split = rep(1:(2*length(select_tissue_types)), each = 4),
+    column_split = rep(seq_along(color_order), each = 8),
     column_title = NULL,
-    heatmap_legend_param = list(
-      title = "Z-Score \nper Group/Sex",
-      at = c(-3, -1:1, 3),
-      title_gp = gpar(fontsize = 7 * scale, fontface = "bold"),
-      labels_gp = gpar(fontsize = 6 * scale),
-      legend_height = 5 * scale * unit(8, "pt"),
-      border = "black"
-    ),
     cell_fun = function(j, i, x, y, width, height, fill) {
       #Heatmap grid
       grid.rect(x = x, y = y, width, height,
                 gp = gpar(col = "#555555"))
+      if ((j - 1) %% 8 == 3) {
+        grid.lines(c(x + width/2, x + width/2),
+                   c(y - height/2, y + height/2),
+                   gp = gpar(col = "black", lwd = 5))
+      }
       #update to use FDR instead of easy Zscore filt
-      if(!is.na(filtered_fdr[i, j]) && abs(filtered_fdr[i, j]) < 0.1) {
+      if(!is.na(filtered_fdr[i, j]) && abs(filtered_fdr[i, j]) < cutoff) {
         gb = textGrob("*")
         gb_w = convertWidth(grobWidth(gb), "mm")
         gb_h = convertHeight(grobHeight(gb), "mm")
         grid.text("*", x, y - gb_h*0.5 + gb_w*0.4)
       }
-
     }
   )
 
+  if (!show_heatmap_legend) {
+    return(list(ht = ht, lgd = NULL))
+  }
+
+  lgd_sex = ComplexHeatmap::Legend(
+    labels = c("female", "male"),
+    legend_gp = gpar(fill = c("female" = "#ff6eff", "male" = "#5555ff")),
+    title = "Sex",
+    title_gp = gpar(fontsize = 7 * scale, fontface = "bold"),
+    labels_gp = gpar(fontsize = 6.5 * scale),
+    border = "black"
+  )
+  lgd_timepoint = ComplexHeatmap::Legend(
+    labels = c("1w", "2w", "4w", "8w"),
+    legend_gp = gpar(fill = c('#F7FCB9', '#ADDD8E', '#238443', '#002612')),
+    title = "Timepoint",
+    title_gp = gpar(fontsize = 7 * scale, fontface = "bold"),
+    labels_gp = gpar(fontsize = 6.5 * scale),
+    border = "black"
+  )
+  lgd_color = ComplexHeatmap::Legend(
+    col_fun = col_fun,
+    at = legend_at,
+    title = legend_title,
+    title_gp = gpar(fontsize = 7 * scale, fontface = "bold"),
+    labels_gp = gpar(fontsize = 6 * scale),
+    legend_height = 5 * scale * unit(8, "pt"),
+    border = "black"
+  )
+
+  lgd = ComplexHeatmap::packLegend(lgd_sex, lgd_timepoint, lgd_color,
+                                   direction = "vertical", gap = unit(3, "mm"))
+
+  return(list(ht = ht, lgd = lgd))
 }
 
-make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend = TRUE){
+make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend = TRUE, show_anno_names = TRUE){
   all_immuno_da_results = MotrpacRatTraining6mo::combine_da_results(tissues = immuno_tissue_types,
                                                                     assays = "IMMUNO",
                                                                     include_epigen = F) %>%
@@ -543,14 +585,10 @@ make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend 
     column_to_rownames("tissue") %>%
     as.matrix()
 
-  column_labels <- colnames(all_immuno_da_results)
-  # use provided color_range so multiple heatmaps share the same scale;
-  # fall back to per-feature range when called standalone
   x_range <- if (!is.null(color_range)) color_range else range(all_immuno_da_results, na.rm = TRUE)
   color_breaks <- c(x_range[1], 0, x_range[2])
-  # Extend range of values out to the nearest 0.1
   legend_breaks <- 0.1 * c(floor(color_breaks[1] / 0.1), 0,
-                           ceiling(color_breaks[3] / 0.1))
+                            ceiling(color_breaks[3] / 0.1))
 
   immuno_pvalue_annotations = MotrpacRatTraining6mo::combine_da_results(tissues = immuno_tissue_types,
                                                                         assays = "IMMUNO",
@@ -564,41 +602,75 @@ make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend 
                        values_from = adj_p_value) %>%
     column_to_rownames("tissue") %>%
     as.data.frame()
-  #use a 0.1 FDR cutoff.
   annotation_matrix <- ifelse(immuno_pvalue_annotations < 0.1, "*", "")
+
+  col_meta = data.frame(
+    col_name = colnames(all_immuno_da_results),
+    sex = sub("_.*", "", colnames(all_immuno_da_results)),
+    timepoint = sub(".*_", "", colnames(all_immuno_da_results))
+  )
+
+  top_anno = ComplexHeatmap::HeatmapAnnotation(
+    Sex = col_meta$sex,
+    Timepoint = col_meta$timepoint,
+    col = list(
+      Sex = c("female" = "#ff6eff", "male" = "#5555ff"),
+      Timepoint = c("1w" = "#F7FCB9", "2w" = "#ADDD8E", "4w" = "#238443", "8w" = "#002612")
+    ),
+    show_legend = FALSE,
+    show_annotation_name = show_anno_names,
+    border = TRUE,
+    gp = gpar(col = "black"),
+    gap = 0,
+    simple_anno_size = unit(9, "pt"),
+    annotation_name_gp = gpar(fontsize = 7)
+  )
 
   p = Heatmap(
     matrix = all_immuno_da_results,
-    col = circlize::colorRamp2(
-      breaks = color_breaks,
-      colors = c("#5555ff", "white", "darkred")
-    ),
+    col = circlize::colorRamp2(breaks = color_breaks, colors = c("#3366ff", "white", "darkred")),
+    na_col = "grey85",
     cluster_columns = FALSE,
     cluster_rows = FALSE,
-    column_title = desired_feature,
-    column_labels = column_labels,
+    column_title = paste0(desired_feature, " peptide"),
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    show_column_names = TRUE,
+    column_labels = col_meta$timepoint,
+    column_names_gp = gpar(fontsize = 7),
+    column_names_rot = 0,
+    column_names_centered = TRUE,
+    column_split = col_meta$sex,
+    column_gap = unit(2, "mm"),
+    top_annotation = top_anno,
+    border = "black",
+    rect_gp = gpar(col = "white", lwd = 0.5),
+    row_names_gp = gpar(fontsize = 7),
+    row_names_side = "left",
+    width = ncol(all_immuno_da_results) * unit(24, "pt"),
+    height = nrow(all_immuno_da_results) * unit(24, "pt"),
     show_heatmap_legend = show_legend,
     heatmap_legend_param = list(
-      title = "logFC",
+      title = "logFC vs.\nControl",
       at = legend_breaks,
-      labels = legend_breaks
+      labels = legend_breaks,
+      title_gp = gpar(fontsize = 8, fontface = "bold"),
+      labels_gp = gpar(fontsize = 7),
+      border = "black"
     ),
     cell_fun = function(j, i, x, y, width, height, fill) {
-      # Add stars for cells with significant p-values
       if (annotation_matrix[i, j] == "*") {
-        grid.text(
-          "*", x = x, y = y,
-          gp = gpar(fontsize = 18, col = "black")
-        )
+        grid.text("*", x = x, y = y + height * 0.1,
+                  gp = gpar(fontsize = 12, col = "black"))
       }
     }
   )
 
   annotation_legend = Legend(
-    labels = c("p < 0.05"),
+    labels = "FDR < 0.1",
     title = "Significance",
-    legend_gp = gpar(fontsize = 10),
-    pch = "*",  # Use the star symbol
+    title_gp = gpar(fontsize = 8, fontface = "bold"),
+    labels_gp = gpar(fontsize = 7),
+    pch = "*",
     type = "points"
   )
   figure_return = list()
@@ -607,7 +679,12 @@ make_immuno_heatmap = function(desired_feature, color_range = NULL, show_legend 
   return(figure_return)
 }
 
-get_motrpac_expression = function(genes, tissues) {
+#as a filter, we implement the DA based on the
+get_motrpac_expression = function(genes, tissues, motrpac_da) {
+  transcript_filt = motrpac_da %>%
+    filter(assay == "TRNSCRPT") %>%
+    distinct(gene_symbol, tissue)
+
   trns_feat_to_gene = MotrpacRatTraining6mo::load_feature_annotation(assay = "TRNSCRPT")
   gene_lookup = trns_feat_to_gene %>%
     dplyr::filter(tolower(gene_name) %in% tolower(genes)) %>%
@@ -619,8 +696,9 @@ get_motrpac_expression = function(genes, tissues) {
     df$Gene = gene_lookup$gene_name[i]
     df
   }) %>%
-    dplyr::bind_rows() %>%
-    dplyr::mutate(detected = Average > 0.5)
+    dplyr::bind_rows()  %>%
+    dplyr::mutate(detected = paste(toupper(Gene), as.character(Tissue)) %in%
+                   paste(toupper(transcript_filt$gene_symbol), transcript_filt$tissue))
 
   expr_table$Tissue = factor(expr_table$Tissue, levels = names(MotrpacBicQC::tissue_cols))
   expr_table$Gene = factor(expr_table$Gene)
@@ -660,7 +738,7 @@ get_gtex_expression = function(genes, rat_to_gtex, tissues = names(rat_to_gtex))
   gtex_with_rat = gtex_expr %>%
     dplyr::left_join(rat_tissue_map_df, by = "tissueSiteDetailId",
                      relationship = "many-to-many") %>%
-    dplyr::mutate(detected = median_tpm > 0.5)
+    dplyr::mutate(detected = median_tpm > 0.1)
 
   tidyr::expand_grid(tissue = tissues, gene = genes) %>%
     dplyr::left_join(
@@ -689,6 +767,94 @@ make_triangle_poly = function(df, tissue_levels, gene_levels) {
   }) %>% dplyr::bind_rows()
 }
 
+summarize_detection = function(rat_data, gtex_data, tissues = NULL) {
+  combined = dplyr::inner_join(
+    rat_data %>% dplyr::select(tissue, gene, rat_detected = detected),
+    gtex_data %>% dplyr::select(tissue, gene, gtex_detected = detected),
+    by = c("tissue", "gene")
+  )
 
+  fmt = function(x) paste0(toupper(substr(x, 1, 1)), tolower(substring(x, 2)))
 
+  tissue_iter = if (!is.null(tissues)) tissues else unique(combined$tissue)
+
+  summaries = lapply(tissue_iter, function(t) {
+    td = combined %>% dplyr::filter(tissue == t)
+
+    rat_genes = td %>%
+      dplyr::filter(!is.na(rat_detected) & rat_detected) %>%
+      dplyr::pull(gene)
+
+    disagree_td = td %>%
+      dplyr::filter(!is.na(rat_detected) & !is.na(gtex_detected) & rat_detected != gtex_detected)
+
+    rat_only = disagree_td %>% dplyr::filter(rat_detected & !gtex_detected) %>% dplyr::pull(gene)
+    human_only = disagree_td %>% dplyr::filter(!rat_detected & gtex_detected) %>% dplyr::pull(gene)
+
+    rat_str = if (length(rat_genes) == 0) {
+      "no transcript expression detected in rat"
+    } else {
+      paste0("Transcriptomic expression for ", paste(fmt(rat_genes), collapse = ", "), " was detected in rats")
+    }
+
+    disagree_parts = c(
+      if (length(rat_only) > 0) paste0(paste(fmt(rat_only), collapse = ", "), " detected in rats only"),
+      if (length(human_only) > 0) paste0(paste(fmt(human_only), collapse = ", "), " detected in humans only")
+    )
+    disagree_str = if (length(disagree_parts) == 0) {
+      "GTEx human data agrees"
+    } else {
+      paste0("GTEx human data disagrees: ", paste(disagree_parts, collapse = "; "))
+    }
+
+    paste0(t, ": ", rat_str, ". ", disagree_str, ".")
+  })
+
+  paste(summaries, collapse = "\n")
+}
+
+compute_detection_summary = function(rat_data, gtex_data, tissues = NULL) {
+  combined = dplyr::inner_join(
+    rat_data %>% dplyr::select(tissue, gene, rat_detected = detected),
+    gtex_data %>% dplyr::select(tissue, gene, gtex_detected = detected),
+    by = c("tissue", "gene")
+  )
+
+  if (!is.null(tissues)) {
+    combined = combined %>% dplyr::filter(tissue %in% tissues) %>%
+      dplyr::mutate(tissue = factor(tissue, levels = tissues))
+  }
+
+  by_tissue = combined %>%
+    dplyr::group_by(tissue) %>%
+    dplyr::summarise(
+      n_genes = dplyr::n(),
+      n_comparable = sum(!is.na(gtex_detected)),
+      rat_n_detected = sum(rat_detected, na.rm = TRUE),
+      rat_pct_detected = round(100 * rat_n_detected / n_genes, 1),
+      human_n_detected = sum(gtex_detected, na.rm = TRUE),
+      human_pct_detected = round(100 * human_n_detected / n_comparable, 1),
+      n_agree = sum(rat_detected == gtex_detected, na.rm = TRUE),
+      pct_agree = round(100 * n_agree / n_comparable, 1),
+      .groups = "drop"
+    )
+
+  overall = combined %>%
+    dplyr::summarise(
+      tissue = factor("Overall"),
+      n_genes = dplyr::n(),
+      n_comparable = sum(!is.na(gtex_detected)),
+      rat_n_detected = sum(rat_detected, na.rm = TRUE),
+      rat_pct_detected = round(100 * rat_n_detected / n_genes, 1),
+      human_n_detected = sum(gtex_detected, na.rm = TRUE),
+      human_pct_detected = round(100 * human_n_detected / n_comparable, 1),
+      n_agree = sum(rat_detected == gtex_detected, na.rm = TRUE),
+      pct_agree = round(100 * n_agree / n_comparable, 1)
+    )
+
+  dplyr::bind_rows(overall, by_tissue) %>%
+    dplyr::select(tissue, rat_n_detected, n_genes, rat_pct_detected,
+                  human_n_detected, n_comparable, human_pct_detected,
+                  n_agree, pct_agree)
+}
 
