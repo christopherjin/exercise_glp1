@@ -23,6 +23,7 @@ library(circlize)
 library(Biobase)
 library(gridExtra)
 library(gtexr)
+library(kableExtra)
 
 output_loc = here()
 source(file.path(output_loc, "glp1a_helpers.R"))
@@ -508,9 +509,16 @@ detection_summary = compute_detection_summary(rat_for_poly, gtex_for_poly, tissu
     agreement = paste0(n_agree, "/", n_comparable, " (", pct_agree, "%)")
   ) %>%
   select(tissue, rat, human, agreement)
-knitr::kable(detection_summary,
-             col.names = c("Tissue", "Rat detected", "Human detected", "Agreement"),
-             caption = "Incretin receptor detection and rat-human agreement by tissue")
+tbl = detection_summary %>%
+  kable(
+    col.names = c("Tissue", "Rat detected", "Human detected", "Agreement"),
+    caption = "Incretin receptor detection and rat-human agreement by tissue"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+
+tbl
+
+# save_kable(tbl, file = here("figures/final_figs/Fig1B_detection_summary_table.png"), zoom = 2)
 ```
 
 
