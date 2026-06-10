@@ -154,7 +154,7 @@ immuno_gcg = get_expression_stats_by_sex("GLUCAGON", immuno_tissues, "IMMUNO") %
 ```
 
 
-```{r figure 1 other genes rna only by sex}
+```{r, include = FALSE}
 other_genes = genes_in %>%
   dplyr::filter(!tolower(gene_name) %in% c("glp1r", "gipr")) %>%
   dplyr::distinct(gene_id, gene_name)
@@ -491,7 +491,7 @@ combined_split_plot = ggplot(poly_data, aes(x = px, y = py, group = group, fill 
   ) +
   ggtitle("Incretin Expression in Rat (upper right) and Human (lower left)")
 
-pdf(file = file.path(here(), "figures", "combined_split_detection_table.pdf"),
+pdf(file = file.path(here(), "figures","final_figs", "Fig_1C_combined_split_detection_table.pdf"),
     width = 16, height = 5)
 print(combined_split_plot)
 dev.off()
