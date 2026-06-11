@@ -205,14 +205,18 @@ other_heatmap_trimmed = make_a_plot_for_tissue_heatmaps(bottom_selection,
                                                         show_heatmap_legend = FALSE)
 heatmap_full = heatmap_trimmed$ht %v% other_heatmap_trimmed$ht #concat vertically
 
+#size the page to the drawn heatmap so there is no surrounding whitespace
+zscore_draw_args = list(heatmap_full,
+                        heatmap_legend_list = list(heatmap_trimmed$lgd),
+                        merge_legends = FALSE,
+                        align_heatmap_legend = "heatmap_top",
+                        align_annotation_legend = "heatmap_top",
+                        ht_gap = unit(12, "mm"))
+zscore_dims = measure_heatmap(zscore_draw_args)
+
 pdf(file = file.path(here(), "figures", "fig_2a_attempts", "all_tissue_combined_rna_zscore.pdf"),
-    width = 18 * scale, height = 6 * scale, family = "ArialMT")
-draw(heatmap_full,
-     heatmap_legend_list = list(heatmap_trimmed$lgd),
-     merge_legends = FALSE,
-     align_heatmap_legend = "heatmap_top",
-     align_annotation_legend = "heatmap_top",
-     ht_gap = unit(12, "mm"))
+    width = zscore_dims["width"], height = zscore_dims["height"], family = "ArialMT")
+do.call(draw, zscore_draw_args)
 dev.off()
 ```
 
@@ -227,14 +231,17 @@ other_heatmap_trimmed_logfc = make_a_plot_for_tissue_heatmaps(bottom_selection,
                                                                show_heatmap_legend = FALSE)
 heatmap_full_logfc = heatmap_trimmed_logfc$ht %v% other_heatmap_trimmed_logfc$ht
 
+logfc_draw_args = list(heatmap_full_logfc,
+                       heatmap_legend_list = list(heatmap_trimmed_logfc$lgd),
+                       merge_legends = FALSE,
+                       align_heatmap_legend = "heatmap_top",
+                       align_annotation_legend = "heatmap_top",
+                       ht_gap = unit(12, "mm"))
+logfc_dims = measure_heatmap(logfc_draw_args)
+
 pdf(file = file.path(here(), "figures", "fig_2a_attempts", "all_tissue_combined_rna_logfc.pdf"),
-    width = 18 * scale, height = 6 * scale, family = "ArialMT")
-draw(heatmap_full_logfc,
-     heatmap_legend_list = list(heatmap_trimmed_logfc$lgd),
-     merge_legends = FALSE,
-     align_heatmap_legend = "heatmap_top",
-     align_annotation_legend = "heatmap_top",
-     ht_gap = unit(12, "mm"))
+    width = logfc_dims["width"], height = logfc_dims["height"], family = "ArialMT")
+do.call(draw, logfc_draw_args)
 dev.off()
 ```
 
@@ -366,9 +373,12 @@ glp_heatmap = make_immuno_heatmap("GLP1", color_range = shared_color_range, show
 
 combined_heatmap = gip_heatmap$plot + glp_heatmap$plot
 
+immuno_draw_args = list(combined_heatmap, annotation_legend_list = gip_heatmap$legend)
+immuno_dims = measure_heatmap(immuno_draw_args)
+
 pdf(file = paste0(here(), "/figures/fig_3_gip_glp_immunoassay.pdf"),
-    width = 16, height = 13)
-draw(combined_heatmap, annotation_legend_list = gip_heatmap$legend)
+    width = immuno_dims["width"], height = immuno_dims["height"])
+do.call(draw, immuno_draw_args)
 dev.off()
 
 
@@ -509,16 +519,29 @@ detection_summary = compute_detection_summary(rat_for_poly, gtex_for_poly, tissu
     agreement = paste0(n_agree, "/", n_comparable, " (", pct_agree, "%)")
   ) %>%
   select(tissue, rat, human, agreement)
+n_rows = nrow(detection_summary)
 tbl = detection_summary %>%
   kable(
     col.names = c("Tissue", "Rat detected", "Human detected", "Agreement"),
-    caption = "Incretin receptor detection and rat-human agreement by tissue"
+    caption = "<span style=\"color:black;font-size:24px;\">Incretin receptor detection and rat-human agreement by tissue</span>",
+    escape = FALSE
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE, font_size = 14) %>%
+  row_spec(0, bold = TRUE, font_size = 18, color = "black") %>%
+  row_spec(1:n_rows, color = "black") %>%
+  column_spec(1:4, extra_css = "padding: 6px 14px; color: black;")
 
 tbl
 
-# save_kable(tbl, file = here("figures/final_figs/Fig1B_detection_summary_table.png"), zoom = 2)
+fig_1b_path = here("figures/final_figs/Fig_1B_detection_summary_table.png")
+save_kable(tbl, file = fig_1b_path, zoom = 2, density = 900)
+
+#pad the saved table with an outer white margin (taller on top) so the composite
+#panel label (B) sits above the caption and never overlaps the table text
+fig_1b_img = magick::image_read(fig_1b_path) %>%
+  magick::image_background("white") %>%
+  magick::image_border("white", "60x170")
+magick::image_write(fig_1b_img, fig_1b_path)
 ```
 
 

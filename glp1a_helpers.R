@@ -371,6 +371,18 @@ plot_rna_immuno_jitterbysex = function(rna_data,
 }
 
 
+# Returns the width/height (inches) that a drawn ComplexHeatmap/HeatmapList occupies,
+# so a pdf() page can be sized to the content with no surrounding whitespace. draw_args
+# is the list of arguments passed to ComplexHeatmap::draw(); margin adds a small uniform
+# border (inches) so nothing is clipped at the page edge.
+measure_heatmap = function(draw_args, margin = 0.1) {
+  grDevices::pdf(file = NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  drawn = do.call(ComplexHeatmap::draw, draw_args)
+  c(width = grid::convertWidth(ComplexHeatmap:::width(drawn), "inch", valueOnly = TRUE) + 2 * margin,
+    height = grid::convertHeight(ComplexHeatmap:::height(drawn), "inch", valueOnly = TRUE) + 2 * margin)
+}
+
 make_a_plot_for_tissue_heatmaps = function(select_tissue_types,
                                            interested_genes,
                                            value_col = "zscore",
