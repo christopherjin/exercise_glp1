@@ -506,10 +506,84 @@ for(single_interested_gene in c("Cckbr", "Cckar")) {
     top = paste0(single_interested_tissue, " — ", single_interested_gene),
     respect = TRUE
   )
-  
+
   dev.off()
 }
 
+```
+
+CCKBR ATAC MEAN vs TRNSCRPT for all timepoints and 8w only, concatenated with
+patchwork so the two panels share one legend.
+```{r cckbr atac mean shared legend}
+single_interested_gene = "Cckbr"
+single_interested_tissue = "HIPPOC"
+qc_norm_matrix = qc_norm_list[[single_interested_tissue]]
+
+subset_pheno = MotrpacRatTraining6moData::PHENO %>% select(pid, sacrificetime, sex)
+specific_feat = qc_norm_matrix %>% filter(gene_symbol == single_interested_gene)
+rna = specific_feat %>% filter(assay == "TRNSCRPT")
+atac = specific_feat %>% filter(assay == "ATAC")
+col_means = atac %>%
+  summarise(across(where(is.numeric), mean)) %>%
+  mutate(assay = "ATAC_MEAN")
+
+atac = bind_rows(atac, col_means, rna) %>%
+  filter(assay %in% c("ATAC_MEAN", "TRNSCRPT"))
+
+atac_plot = t(atac %>% select(-feature_ID, -assay, -gene_symbol)) %>%
+  as.data.frame()
+colnames(atac_plot) = c("ATAC_MEAN", "TRNSCRPT")
+atac_plot$pid = as.numeric(rownames(atac_plot))
+atac_plot = left_join(atac_plot, subset_pheno, by = "pid") %>%
+  distinct(pid, .keep_all = TRUE)
+atac_plot = atac_plot[complete.cases(atac_plot),]
+
+all_tp_plot = ggplot(atac_plot, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
+  geom_point(aes(color = sex, shape = sex), size = 2) +
+  geom_smooth(method = "lm", color = "darkblue", se = TRUE) +
+  labs(
+    title = paste0("All Timepoints, N = ", nrow(atac_plot)),
+    x = "ATAC logCPM",
+    y = "Transcript logCPM",
+    color = "Sex",
+    shape = "Sex"
+  ) +
+  theme_minimal(base_size = 10) +
+  stat_cor(method = "pearson", label.y.npc = "top") +
+  guides(shape = "none") +
+  scale_color_manual(values = c("male" = "#1F77B4",
+                                "female" = "#E377C2"))
+
+atac_plot_8w = atac_plot %>% filter(sacrificetime == "8w")
+wk8_plot = ggplot(atac_plot_8w, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
+  geom_point(aes(color = sex, shape = sex), size = 2) +
+  geom_smooth(method = "lm", color = "darkblue", se = TRUE) +
+  labs(
+    title = paste0("8w Only, N = ", nrow(atac_plot_8w)),
+    x = "ATAC logCPM",
+    y = "Transcript logCPM",
+    color = "Sex",
+    shape = "Sex"
+  ) +
+  theme_minimal(base_size = 10) +
+  stat_cor(method = "pearson", label.y.npc = "top") +
+  guides(shape = "none") +
+  scale_color_manual(values = c("male" = "#1F77B4",
+                                "female" = "#E377C2"))
+
+cckbr_combined = (all_tp_plot + wk8_plot) +
+  plot_layout(guides = "collect") +
+  plot_annotation(title = paste0(single_interested_tissue, " — ", single_interested_gene)) &
+  theme(legend.position = "bottom")
+
+fig_name = paste0("fig_2d_", single_interested_gene, "_", single_interested_tissue, "_shared_legend.pdf")
+ggsave(filename = file.path(here(), "figures", fig_name),
+       plot = cckbr_combined,
+       width = 6,
+       height = 4,
+       units = "in")
+
+cckbr_combined
 ```
 
 
