@@ -95,7 +95,7 @@ message("Wrote Figure_1 (", round(canvas_w1, 2), " x ", round(canvas_h1, 2), " i
 # Top: A heatmap full width. Bottom: B and C side by side (equal aspect ratios).
 p2a = read_panel("Fig_2A_all_tissue_combined_rna_zscore.pdf")
 p2b = read_panel("Fig_2B_rna_triangle_direction.pdf")
-p2c = read_panel("Fig_2C_Cckbr_HIPPOC.pdf")
+p2c = read_panel("Fig_2C_Cckbr_HIPPOC_shared_legend.pdf")
 
 ar_2a = panel_ar(p2a)
 ar_2b = panel_ar(p2b)

@@ -573,7 +573,10 @@ wk8_plot = ggplot(atac_plot_8w, aes(x = ATAC_MEAN, y = TRNSCRPT)) +
 
 cckbr_combined = (all_tp_plot + wk8_plot) +
   plot_layout(guides = "collect") +
-  plot_annotation(title = paste0(single_interested_tissue, " — ", single_interested_gene)) &
+  plot_annotation(
+    title = paste0(single_interested_tissue, " — ", single_interested_gene),
+    theme = theme(plot.title = element_text(hjust = 0.5))
+  ) &
   theme(legend.position = "bottom")
 
 fig_name = paste0("fig_2d_", single_interested_gene, "_", single_interested_tissue, "_shared_legend.pdf")
